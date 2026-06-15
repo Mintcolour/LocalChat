@@ -27,13 +27,17 @@ class IdentityService {
 
   SimpleKeyPair get signingKeyPair {
     final value = _signingKeyPair;
-    if (value == null) throw StateError('Signing key pair has not been loaded.');
+    if (value == null) {
+      throw StateError('Signing key pair has not been loaded.');
+    }
     return value;
   }
 
   SimpleKeyPair get exchangeKeyPair {
     final value = _exchangeKeyPair;
-    if (value == null) throw StateError('Exchange key pair has not been loaded.');
+    if (value == null) {
+      throw StateError('Exchange key pair has not been loaded.');
+    }
     return value;
   }
 

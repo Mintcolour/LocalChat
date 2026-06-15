@@ -21,7 +21,11 @@ class DiscoveryService {
   Future<void> start({required int listenPort}) async {
     _listenPort = listenPort;
     await stop();
-    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort, reuseAddress: true);
+    final socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      discoveryPort,
+      reuseAddress: true,
+    );
     socket.broadcastEnabled = true;
     socket.listen(_handleEvent);
     _sockets.add(socket);
@@ -39,7 +43,9 @@ class DiscoveryService {
   }
 
   Future<void> announce() async {
-    if (_listenPort <= 0 || _sockets.isEmpty) return;
+    if (_listenPort <= 0 || _sockets.isEmpty) {
+      return;
+    }
     final identity = _identityService.identity;
     final peer = DiscoveredPeer(
       deviceId: identity.deviceId,
@@ -59,12 +65,20 @@ class DiscoveryService {
   }
 
   Future<void> _handleEvent(RawSocketEvent event) async {
-    if (event != RawSocketEvent.read) return;
+    if (event != RawSocketEvent.read) {
+      return;
+    }
     for (final socket in _sockets) {
       Datagram? datagram;
       while ((datagram = socket.receive()) != null) {
-        final peer = DiscoveredPeer.fromDatagram(datagram!.data, datagram.address.address);
-        if (peer == null || peer.deviceId == _identityService.identity.deviceId) continue;
+        final peer = DiscoveredPeer.fromDatagram(
+          datagram!.data,
+          datagram.address.address,
+        );
+        if (peer == null ||
+            peer.deviceId == _identityService.identity.deviceId) {
+          continue;
+        }
         await _db.upsertDiscoveredDevice(
           id: peer.deviceId,
           displayName: peer.displayName,

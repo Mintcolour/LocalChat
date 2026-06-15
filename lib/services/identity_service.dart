@@ -1,0 +1,114 @@
+import 'dart:io';
+
+import 'package:cryptography/cryptography.dart';
+
+import '../core/formatters.dart';
+import '../data/app_database.dart';
+import '../models/protocol.dart';
+
+class IdentityService {
+  IdentityService(this._db);
+
+  final AppDatabase _db;
+  final _signing = Ed25519();
+  final _exchange = X25519();
+
+  LocalIdentity? _identity;
+  SimpleKeyPair? _signingKeyPair;
+  SimpleKeyPair? _exchangeKeyPair;
+
+  LocalIdentity get identity {
+    final value = _identity;
+    if (value == null) {
+      throw StateError('Identity has not been loaded.');
+    }
+    return value;
+  }
+
+  SimpleKeyPair get signingKeyPair {
+    final value = _signingKeyPair;
+    if (value == null) throw StateError('Signing key pair has not been loaded.');
+    return value;
+  }
+
+  SimpleKeyPair get exchangeKeyPair {
+    final value = _exchangeKeyPair;
+    if (value == null) throw StateError('Exchange key pair has not been loaded.');
+    return value;
+  }
+
+  Future<LocalIdentity> load() async {
+    final existingDeviceId = await _db.getSetting('identity.device_id');
+    if (existingDeviceId != null) {
+      final signingPrivate = await _db.getSetting('identity.signing_private_key');
+      final signingPublic = await _db.getSetting('identity.signing_public_key');
+      final exchangePrivate = await _db.getSetting('identity.exchange_private_key');
+      final exchangePublic = await _db.getSetting('identity.exchange_public_key');
+      final displayName = await _db.getSetting('identity.display_name');
+      final platform = await _db.getSetting('identity.platform');
+      final fingerprint = await _db.getSetting('identity.fingerprint');
+      if (signingPrivate != null &&
+          signingPublic != null &&
+          exchangePrivate != null &&
+          exchangePublic != null &&
+          displayName != null &&
+          platform != null &&
+          fingerprint != null) {
+        _signingKeyPair = SimpleKeyPairData(
+          unb64(signingPrivate),
+          publicKey: SimplePublicKey(unb64(signingPublic), type: KeyPairType.ed25519),
+          type: KeyPairType.ed25519,
+        );
+        _exchangeKeyPair = SimpleKeyPairData(
+          unb64(exchangePrivate),
+          publicKey: SimplePublicKey(unb64(exchangePublic), type: KeyPairType.x25519),
+          type: KeyPairType.x25519,
+        );
+        return _identity = LocalIdentity(
+          deviceId: existingDeviceId,
+          displayName: displayName,
+          platform: platform,
+          signingPrivateKey: signingPrivate,
+          signingPublicKey: signingPublic,
+          exchangePrivateKey: exchangePrivate,
+          exchangePublicKey: exchangePublic,
+          fingerprint: fingerprint,
+        );
+      }
+    }
+
+    final signingKeyPair = await _signing.newKeyPair();
+    final exchangeKeyPair = await _exchange.newKeyPair();
+    final signingPrivate = b64(await signingKeyPair.extractPrivateKeyBytes());
+    final exchangePrivate = b64(await exchangeKeyPair.extractPrivateKeyBytes());
+    final signingPublic = b64((await signingKeyPair.extractPublicKey()).bytes);
+    final exchangePublic = b64((await exchangeKeyPair.extractPublicKey()).bytes);
+    final fingerprint = sha256Hex(unb64(signingPublic));
+    final deviceId = fingerprint.substring(0, 20);
+    final platform = Platform.operatingSystem;
+    final host = Platform.localHostname.trim();
+    final displayName = host.isEmpty ? 'LocalChat-$deviceId' : host;
+
+    await _db.setSetting('identity.device_id', deviceId);
+    await _db.setSetting('identity.display_name', displayName);
+    await _db.setSetting('identity.platform', platform);
+    await _db.setSetting('identity.signing_private_key', signingPrivate);
+    await _db.setSetting('identity.signing_public_key', signingPublic);
+    await _db.setSetting('identity.exchange_private_key', exchangePrivate);
+    await _db.setSetting('identity.exchange_public_key', exchangePublic);
+    await _db.setSetting('identity.fingerprint', fingerprint);
+
+    _signingKeyPair = signingKeyPair;
+    _exchangeKeyPair = exchangeKeyPair;
+    return _identity = LocalIdentity(
+      deviceId: deviceId,
+      displayName: displayName,
+      platform: platform,
+      signingPrivateKey: signingPrivate,
+      signingPublicKey: signingPublic,
+      exchangePrivateKey: exchangePrivate,
+      exchangePublicKey: exchangePublic,
+      fingerprint: fingerprint,
+    );
+  }
+}

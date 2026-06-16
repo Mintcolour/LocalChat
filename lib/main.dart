@@ -92,31 +92,14 @@ class _LocalChatHomeState extends State<LocalChatHome> {
             title: const Text('LocalChat'),
             actions: [
               IconButton(
-                tooltip: '刷新',
-                onPressed: controller.refresh,
-                icon: const Icon(Icons.refresh),
+                tooltip: '重新搜索',
+                onPressed: controller.rescan,
+                icon: const Icon(Icons.travel_explore),
               ),
-              PopupMenuButton<String>(
+              IconButton(
                 tooltip: '设置',
-                onSelected: (value) {
-                  if (value == 'clear_history') {
-                    controller.clearHistory();
-                  }
-                  if (value == 'clear_transfers') {
-                    controller.clearTransferIndex();
-                  }
-                  if (value == 'rename_local') {
-                    _showLocalRenameDialog(context, controller);
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'rename_local', child: Text('修改本机昵称')),
-                  PopupMenuItem(value: 'clear_history', child: Text('清空聊天记录')),
-                  PopupMenuItem(
-                    value: 'clear_transfers',
-                    child: Text('清空接收文件索引'),
-                  ),
-                ],
+                onPressed: () => _showSettingsDialog(context, controller),
+                icon: const Icon(Icons.settings_outlined),
               ),
             ],
           ),
@@ -130,6 +113,7 @@ class _LocalChatHomeState extends State<LocalChatHome> {
                   textController: _textController,
                   dragging: _dragging,
                   onDragState: (value) => setState(() => _dragging = value),
+                  showHeader: !narrow,
                 );
                 if (narrow) {
                   return controller.selectedDevice == null
@@ -185,6 +169,14 @@ class _DevicePane extends StatelessWidget {
             _DeviceTile(controller: controller, device: device),
           const SizedBox(height: 16),
           _SectionTitle(title: '发现的设备', count: discovered.length),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: controller.rescan,
+              icon: const Icon(Icons.travel_explore),
+              label: const Text('重新搜索'),
+            ),
+          ),
           if (discovered.isEmpty) const _EmptyHint('正在监听局域网广播...'),
           for (final device in discovered)
             _DeviceTile(controller: controller, device: device),
@@ -342,12 +334,14 @@ class _ChatPane extends StatelessWidget {
     required this.textController,
     required this.dragging,
     required this.onDragState,
+    required this.showHeader,
   });
 
   final AppController controller;
   final TextEditingController textController;
   final bool dragging;
   final ValueChanged<bool> onDragState;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -370,7 +364,8 @@ class _ChatPane extends StatelessWidget {
       },
       child: Column(
         children: [
-          _DesktopPeerHeader(controller: controller, peer: peer),
+          if (showHeader)
+            _DesktopPeerHeader(controller: controller, peer: peer),
           if (peer.trusted && !online) _ConnectionBanner(peer: peer),
           if (dragging) const _DropBanner(),
           Expanded(
@@ -544,13 +539,14 @@ Future<void> _confirmDeleteConversation(
   BuildContext context,
   AppController controller,
 ) async {
-  final conversation = controller.selectedConversation;
-  if (conversation == null) return;
+  final peer = controller.selectedDevice;
+  if (peer == null) return;
+  final title = controller.titleFor(peer);
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('删除会话？'),
-      content: Text('将删除“${conversation.title}”的聊天记录和传输索引，磁盘上的文件不会被删除。'),
+      content: Text('将删除“$title”的聊天记录、传输索引、连接信息和信任关系，磁盘上的文件不会被删除。'),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
@@ -566,6 +562,71 @@ Future<void> _confirmDeleteConversation(
   if (confirmed == true) {
     await controller.deleteSelectedConversation();
   }
+}
+
+Future<void> _showSettingsDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => AlertDialog(
+        title: const Text('设置'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('本机昵称'),
+                subtitle: Text(controller.identity?.displayName ?? 'LocalChat'),
+                trailing: IconButton(
+                  tooltip: '修改本机昵称',
+                  onPressed: () => _showLocalRenameDialog(context, controller),
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('自动复制收到的文字'),
+                subtitle: const Text('收到文字或链接时自动复制到系统剪贴板'),
+                value: controller.autoCopyReceivedText,
+                onChanged: controller.setAutoCopyReceivedText,
+              ),
+              const Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('清空聊天记录'),
+                subtitle: const Text('删除所有会话和消息，不删除磁盘文件'),
+                trailing: TextButton(
+                  onPressed: controller.clearHistory,
+                  child: const Text('清空'),
+                ),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('清空接收文件索引'),
+                subtitle: const Text('只清理记录，不删除磁盘文件'),
+                trailing: TextButton(
+                  onPressed: controller.clearTransferIndex,
+                  child: const Text('清空'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('完成'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 Future<void> _showLocalRenameDialog(

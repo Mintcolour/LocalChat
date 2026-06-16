@@ -16,6 +16,9 @@ import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
 
+const _autoCopyReceivedTextKey = 'auto_copy_received_text';
+const _staleDiscoveredDeviceAge = Duration(seconds: 20);
+
 class AppController extends ChangeNotifier {
   AppController() : db = AppDatabase(), fileStore = FileStore() {
     identityService = IdentityService(db);
@@ -46,6 +49,7 @@ class AppController extends ChangeNotifier {
   PendingPairRequest? pendingPairRequest;
   bool initialized = false;
   bool busy = false;
+  bool autoCopyReceivedText = true;
   String status = '正在启动 LocalChat...';
   String? lastError;
   String? notificationText;
@@ -66,6 +70,9 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       identity = await identityService.load();
+      autoCopyReceivedText =
+          await db.getSetting(_autoCopyReceivedTextKey) != 'false';
+      transportService.autoCopyReceivedText = autoCopyReceivedText;
       transportService.reconnectPeer = _waitForReconnectedPeer;
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
@@ -100,8 +107,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    devices = await db.listDevices();
     conversations = await db.listConversations();
+    await db.deleteStaleUntrustedDevices(
+      DateTime.now().subtract(_staleDiscoveredDeviceAge),
+    );
+    devices = await db.listDevices();
+    _sortDevices();
     if (selectedDevice != null) {
       selectedDevice =
           devices
@@ -152,16 +163,37 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> deleteSelectedConversation() async {
-    final conversation = selectedConversation;
-    if (conversation == null) return;
-    final title = conversation.title;
-    await db.deleteConversation(conversation.id);
+    final peer = selectedDevice;
+    if (peer == null) return;
+    final title = titleFor(peer);
+    await db.deletePeerSession(peer.id);
     selectedConversation = null;
     selectedDevice = null;
     messages = [];
     transfersById = {};
     status = '已删除会话 $title';
     await refresh();
+  }
+
+  Future<void> setAutoCopyReceivedText(bool value) async {
+    autoCopyReceivedText = value;
+    transportService.autoCopyReceivedText = value;
+    await db.setSetting(_autoCopyReceivedTextKey, value ? 'true' : 'false');
+    status = value ? '已开启自动复制收到的文字' : '已关闭自动复制收到的文字';
+    notifyListeners();
+  }
+
+  Future<void> rescan() async {
+    status = '正在重新搜索局域网设备...';
+    notifyListeners();
+    await discoveryService.announce();
+    await _refreshPeerPresence();
+    await db.deleteStaleUntrustedDevices(
+      DateTime.now().subtract(_staleDiscoveredDeviceAge),
+    );
+    await refresh();
+    status = '已刷新设备列表';
+    notifyListeners();
   }
 
   Future<void> renameLocalDevice(String title) async {
@@ -310,8 +342,11 @@ class AppController extends ChangeNotifier {
     await db.clearHistory();
     messages = [];
     conversations = [];
+    selectedDevice = null;
+    selectedConversation = null;
+    transfersById = {};
     status = '聊天记录已清空';
-    notifyListeners();
+    await refresh();
   }
 
   Future<void> clearTransferIndex() async {
@@ -370,6 +405,19 @@ class AppController extends ChangeNotifier {
     if (peer == null) return null;
     selectedDevice = await db.getDevice(peer.id) ?? peer;
     return selectedDevice;
+  }
+
+  void _sortDevices() {
+    devices.sort((a, b) {
+      if (a.trusted != b.trusted) {
+        return a.trusted ? -1 : 1;
+      }
+      final titleCompare = titleFor(
+        a,
+      ).toLowerCase().compareTo(titleFor(b).toLowerCase());
+      if (titleCompare != 0) return titleCompare;
+      return a.createdAt.compareTo(b.createdAt);
+    });
   }
 
   Future<Device?> _waitForReconnectedPeer(String deviceId) async {

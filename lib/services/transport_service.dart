@@ -50,6 +50,7 @@ class TransportService {
   HttpServer? _server;
   int _port = 0;
   Future<Device?> Function(String deviceId)? reconnectPeer;
+  bool autoCopyReceivedText = true;
 
   int get port => _port;
   Stream<void> get updates => _updates.stream;
@@ -686,13 +687,17 @@ class TransportService {
                 DateTime.now(),
           ),
         );
-        if ((kind == 'text' || kind == 'link') && body.isNotEmpty) {
+        if ((kind == 'text' || kind == 'link') &&
+            body.isNotEmpty &&
+            autoCopyReceivedText) {
           try {
             await Clipboard.setData(ClipboardData(text: body));
             _notifications.add('收到 ${peer.displayName} 的文字，已复制到剪贴板');
           } catch (_) {
             _notifications.add('收到 ${peer.displayName} 的文字');
           }
+        } else if ((kind == 'text' || kind == 'link') && body.isNotEmpty) {
+          _notifications.add('收到 ${peer.displayName} 的文字');
         } else {
           _notifications.add('收到 ${peer.displayName} 的消息');
         }

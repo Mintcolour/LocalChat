@@ -134,14 +134,19 @@ class AppDatabase extends _$AppDatabase {
   Future<List<Device>> listTrustedDevices() {
     return (select(devices)
           ..where((tbl) => tbl.trusted.equals(true))
-          ..orderBy([(tbl) => OrderingTerm.desc(tbl.lastSeen)]))
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.displayName),
+            (tbl) => OrderingTerm.asc(tbl.createdAt),
+          ]))
         .get();
   }
 
   Future<List<Device>> listDevices() {
-    return (select(
-      devices,
-    )..orderBy([(tbl) => OrderingTerm.desc(tbl.lastSeen)])).get();
+    return (select(devices)..orderBy([
+          (tbl) => OrderingTerm.asc(tbl.displayName),
+          (tbl) => OrderingTerm.asc(tbl.createdAt),
+        ]))
+        .get();
   }
 
   Future<Device?> getDevice(String id) {
@@ -296,6 +301,28 @@ class AppDatabase extends _$AppDatabase {
     await (delete(
       conversations,
     )..where((tbl) => tbl.id.equals(conversationId))).go();
+  }
+
+  Future<void> deletePeerSession(String deviceId) async {
+    await (delete(
+      transfers,
+    )..where((tbl) => tbl.peerDeviceId.equals(deviceId))).go();
+    await (delete(
+      chatMessages,
+    )..where((tbl) => tbl.peerDeviceId.equals(deviceId))).go();
+    await (delete(
+      conversations,
+    )..where((tbl) => tbl.peerDeviceId.equals(deviceId))).go();
+    await (delete(devices)..where((tbl) => tbl.id.equals(deviceId))).go();
+  }
+
+  Future<void> deleteStaleUntrustedDevices(DateTime cutoff) async {
+    await (delete(devices)..where(
+          (tbl) =>
+              tbl.trusted.equals(false) &
+              (tbl.lastSeen.isNull() | tbl.lastSeen.isSmallerThanValue(cutoff)),
+        ))
+        .go();
   }
 
   Future<List<ChatMessage>> listMessages(String conversationId) {

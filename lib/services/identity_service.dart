@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../core/device_profile.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
@@ -44,13 +45,21 @@ class IdentityService {
   Future<LocalIdentity> load() async {
     final existingDeviceId = await _db.getSetting('identity.device_id');
     if (existingDeviceId != null) {
-      final signingPrivate = await _db.getSetting('identity.signing_private_key');
+      final signingPrivate = await _db.getSetting(
+        'identity.signing_private_key',
+      );
       final signingPublic = await _db.getSetting('identity.signing_public_key');
-      final exchangePrivate = await _db.getSetting('identity.exchange_private_key');
-      final exchangePublic = await _db.getSetting('identity.exchange_public_key');
+      final exchangePrivate = await _db.getSetting(
+        'identity.exchange_private_key',
+      );
+      final exchangePublic = await _db.getSetting(
+        'identity.exchange_public_key',
+      );
       final displayName = await _db.getSetting('identity.display_name');
       final platform = await _db.getSetting('identity.platform');
       final fingerprint = await _db.getSetting('identity.fingerprint');
+      var avatarSeed = await _db.getSetting('identity.avatar_seed');
+      var avatarColor = await _db.getSetting('identity.avatar_color');
       if (signingPrivate != null &&
           signingPublic != null &&
           exchangePrivate != null &&
@@ -58,14 +67,24 @@ class IdentityService {
           displayName != null &&
           platform != null &&
           fingerprint != null) {
+        avatarSeed ??= avatarSeedFor(existingDeviceId, fingerprint);
+        avatarColor ??= avatarColorFor(avatarSeed);
+        await _db.setSetting('identity.avatar_seed', avatarSeed);
+        await _db.setSetting('identity.avatar_color', avatarColor);
         _signingKeyPair = SimpleKeyPairData(
           unb64(signingPrivate),
-          publicKey: SimplePublicKey(unb64(signingPublic), type: KeyPairType.ed25519),
+          publicKey: SimplePublicKey(
+            unb64(signingPublic),
+            type: KeyPairType.ed25519,
+          ),
           type: KeyPairType.ed25519,
         );
         _exchangeKeyPair = SimpleKeyPairData(
           unb64(exchangePrivate),
-          publicKey: SimplePublicKey(unb64(exchangePublic), type: KeyPairType.x25519),
+          publicKey: SimplePublicKey(
+            unb64(exchangePublic),
+            type: KeyPairType.x25519,
+          ),
           type: KeyPairType.x25519,
         );
         return _identity = LocalIdentity(
@@ -77,6 +96,8 @@ class IdentityService {
           exchangePrivateKey: exchangePrivate,
           exchangePublicKey: exchangePublic,
           fingerprint: fingerprint,
+          avatarSeed: avatarSeed,
+          avatarColor: avatarColor,
         );
       }
     }
@@ -86,15 +107,20 @@ class IdentityService {
     final signingPrivate = b64(await signingKeyPair.extractPrivateKeyBytes());
     final exchangePrivate = b64(await exchangeKeyPair.extractPrivateKeyBytes());
     final signingPublic = b64((await signingKeyPair.extractPublicKey()).bytes);
-    final exchangePublic = b64((await exchangeKeyPair.extractPublicKey()).bytes);
+    final exchangePublic = b64(
+      (await exchangeKeyPair.extractPublicKey()).bytes,
+    );
     final fingerprint = sha256Hex(unb64(signingPublic));
     final deviceId = fingerprint.substring(0, 20);
     final platform = Platform.operatingSystem;
-    final host = Platform.localHostname.trim();
-    final displayName = host.isEmpty ? 'LocalChat-$deviceId' : host;
+    final displayName = defaultDeviceNickname(platform, fingerprint);
+    final avatarSeed = avatarSeedFor(deviceId, fingerprint);
+    final avatarColor = avatarColorFor(avatarSeed);
 
     await _db.setSetting('identity.device_id', deviceId);
     await _db.setSetting('identity.display_name', displayName);
+    await _db.setSetting('identity.avatar_seed', avatarSeed);
+    await _db.setSetting('identity.avatar_color', avatarColor);
     await _db.setSetting('identity.platform', platform);
     await _db.setSetting('identity.signing_private_key', signingPrivate);
     await _db.setSetting('identity.signing_public_key', signingPublic);
@@ -113,6 +139,27 @@ class IdentityService {
       exchangePrivateKey: exchangePrivate,
       exchangePublicKey: exchangePublic,
       fingerprint: fingerprint,
+      avatarSeed: avatarSeed,
+      avatarColor: avatarColor,
+    );
+  }
+
+  Future<LocalIdentity> updateDisplayName(String displayName) async {
+    final current = identity;
+    final trimmed = displayName.trim();
+    if (trimmed.isEmpty) return current;
+    await _db.setSetting('identity.display_name', trimmed);
+    return _identity = LocalIdentity(
+      deviceId: current.deviceId,
+      displayName: trimmed,
+      platform: current.platform,
+      signingPrivateKey: current.signingPrivateKey,
+      signingPublicKey: current.signingPublicKey,
+      exchangePrivateKey: current.exchangePrivateKey,
+      exchangePublicKey: current.exchangePublicKey,
+      fingerprint: current.fingerprint,
+      avatarSeed: current.avatarSeed,
+      avatarColor: current.avatarColor,
     );
   }
 }

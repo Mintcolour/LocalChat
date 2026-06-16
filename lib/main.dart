@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
 import 'app/app_controller.dart';
+import 'core/device_profile.dart';
+import 'core/file_types.dart';
 import 'core/formatters.dart';
 import 'core/peer_status.dart';
 import 'data/app_database.dart';
+import 'models/protocol.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +49,8 @@ class LocalChatHome extends StatefulWidget {
 class _LocalChatHomeState extends State<LocalChatHome> {
   final _textController = TextEditingController();
   bool _dragging = false;
+  String? _shownPairRequestId;
+  int _shownNotificationSerial = 0;
 
   AppController get controller => widget.controller;
 
@@ -58,6 +65,28 @@ class _LocalChatHomeState extends State<LocalChatHome> {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        final pendingPair = controller.pendingPairRequest;
+        if (pendingPair == null) {
+          _shownPairRequestId = null;
+        } else if (_shownPairRequestId != pendingPair.id) {
+          _shownPairRequestId = pendingPair.id;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _showPairRequestDialog(context, controller, pendingPair);
+            }
+          });
+        }
+        if (controller.notificationSerial != _shownNotificationSerial &&
+            controller.notificationText != null) {
+          _shownNotificationSerial = controller.notificationSerial;
+          final message = controller.notificationText!;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(SnackBar(content: Text(message)));
+          });
+        }
         return Scaffold(
           appBar: AppBar(
             title: const Text('LocalChat'),
@@ -76,8 +105,12 @@ class _LocalChatHomeState extends State<LocalChatHome> {
                   if (value == 'clear_transfers') {
                     controller.clearTransferIndex();
                   }
+                  if (value == 'rename_local') {
+                    _showLocalRenameDialog(context, controller);
+                  }
                 },
                 itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'rename_local', child: Text('修改本机昵称')),
                   PopupMenuItem(value: 'clear_history', child: Text('清空聊天记录')),
                   PopupMenuItem(
                     value: 'clear_transfers',
@@ -180,9 +213,23 @@ class _LocalIdentityCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            identity?.displayName ?? 'LocalChat',
-            style: Theme.of(context).textTheme.titleMedium,
+          Row(
+            children: [
+              if (identity != null)
+                _DeviceAvatar(
+                  name: identity.displayName,
+                  platform: identity.platform,
+                  avatarSeed: identity.avatarSeed,
+                  avatarColor: identity.avatarColor,
+                ),
+              if (identity != null) const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  identity?.displayName ?? 'LocalChat',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           Text(
@@ -211,8 +258,12 @@ class _DeviceTile extends StatelessWidget {
       child: ListTile(
         selected: selected,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        leading: CircleAvatar(
-          child: Icon(device.trusted ? Icons.verified_user : Icons.devices),
+        leading: _DeviceAvatar(
+          name: controller.titleFor(device),
+          platform: device.platform,
+          avatarSeed: device.avatarSeed,
+          avatarColor: device.avatarColor,
+          trusted: device.trusted,
         ),
         title: Text(
           controller.titleFor(device),
@@ -236,6 +287,53 @@ class _DeviceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DeviceAvatar extends StatelessWidget {
+  const _DeviceAvatar({
+    required this.name,
+    required this.platform,
+    required this.avatarSeed,
+    required this.avatarColor,
+    this.trusted = true,
+    this.radius = 20,
+  });
+
+  final String name;
+  final String platform;
+  final String avatarSeed;
+  final String avatarColor;
+  final bool trusted;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _colorFromHex(
+      avatarColor.isEmpty ? avatarColorFor(avatarSeed) : avatarColor,
+    );
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: color,
+      child: trusted
+          ? Text(
+              avatarInitial(name, platform),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          : Icon(Icons.lock_open, color: Colors.white, size: radius),
+    );
+  }
+}
+
+Color _colorFromHex(String value) {
+  final clean = value.replaceFirst('#', '');
+  final parsed = int.tryParse(
+    clean.length == 6 ? 'FF$clean' : clean,
+    radix: 16,
+  );
+  return Color(parsed ?? 0xFF2563EB);
 }
 
 class _ChatPane extends StatelessWidget {
@@ -320,8 +418,12 @@ class _DesktopPeerHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            child: Icon(peer.trusted ? Icons.verified : Icons.lock_open),
+          _DeviceAvatar(
+            name: controller.titleFor(peer),
+            platform: peer.platform,
+            avatarSeed: peer.avatarSeed,
+            avatarColor: peer.avatarColor,
+            trusted: peer.trusted,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -345,6 +447,12 @@ class _DesktopPeerHeader extends StatelessWidget {
               tooltip: '重命名会话',
               onPressed: () => _showRenameDialog(context, controller, peer),
               icon: const Icon(Icons.edit_outlined),
+            ),
+          if (peer.trusted)
+            IconButton(
+              tooltip: '删除会话',
+              onPressed: () => _confirmDeleteConversation(context, controller),
+              icon: const Icon(Icons.delete_outline),
             ),
           if (!peer.trusted)
             FilledButton.icon(
@@ -377,10 +485,21 @@ class _MobilePeerHeader extends StatelessWidget {
       title: Text(controller.titleFor(peer)),
       subtitle: Text(peerStatusLabel(peer)),
       trailing: peer.trusted
-          ? IconButton(
-              tooltip: '重命名会话',
-              onPressed: () => _showRenameDialog(context, controller, peer),
-              icon: const Icon(Icons.edit_outlined),
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: '重命名会话',
+                  onPressed: () => _showRenameDialog(context, controller, peer),
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+                IconButton(
+                  tooltip: '删除会话',
+                  onPressed: () =>
+                      _confirmDeleteConversation(context, controller),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
             )
           : null,
     );
@@ -392,16 +511,17 @@ Future<void> _showRenameDialog(
   AppController controller,
   Device peer,
 ) async {
-  final input = TextEditingController(text: controller.titleFor(peer));
+  var input = controller.titleFor(peer);
   final value = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('重命名会话'),
-      content: TextField(
-        controller: input,
+      content: TextFormField(
+        initialValue: input,
         autofocus: true,
         decoration: const InputDecoration(labelText: '会话名称'),
-        onSubmitted: (value) => Navigator.of(context).pop(value),
+        onChanged: (value) => input = value,
+        onFieldSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: [
         TextButton(
@@ -409,15 +529,142 @@ Future<void> _showRenameDialog(
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(input.text),
+          onPressed: () => Navigator.of(context).pop(input),
           child: const Text('保存'),
         ),
       ],
     ),
   );
-  input.dispose();
   if (value != null) {
     await controller.renameSelectedConversation(value);
+  }
+}
+
+Future<void> _confirmDeleteConversation(
+  BuildContext context,
+  AppController controller,
+) async {
+  final conversation = controller.selectedConversation;
+  if (conversation == null) return;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('删除会话？'),
+      content: Text('将删除“${conversation.title}”的聊天记录和传输索引，磁盘上的文件不会被删除。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('删除'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true) {
+    await controller.deleteSelectedConversation();
+  }
+}
+
+Future<void> _showLocalRenameDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  var input = controller.identity?.displayName ?? 'LocalChat';
+  final value = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('修改本机昵称'),
+      content: TextFormField(
+        initialValue: input,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: '别人看到的设备名称'),
+        onChanged: (value) => input = value,
+        onFieldSubmitted: (value) => Navigator.of(context).pop(value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(input),
+          child: const Text('保存'),
+        ),
+      ],
+    ),
+  );
+  if (value != null) {
+    await controller.renameLocalDevice(value);
+  }
+}
+
+Future<void> _showPairRequestDialog(
+  BuildContext context,
+  AppController controller,
+  PendingPairRequest request,
+) async {
+  final allowed = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('允许设备配对？'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _DeviceAvatar(
+                name: request.displayName,
+                platform: request.platform,
+                avatarSeed: request.avatarSeed,
+                avatarColor: request.avatarColor,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      request.displayName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      '${request.platform} · ${displayHost(request.host, request.port)}',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '校验码：${request.code}',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          Text('指纹：${shortFingerprint(request.fingerprint)}'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('拒绝'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('允许'),
+        ),
+      ],
+    ),
+  );
+  if (allowed == true) {
+    await controller.approvePendingPair();
+  } else {
+    await controller.rejectPendingPair();
   }
 }
 
@@ -492,24 +739,73 @@ class _MessageBubble extends StatelessWidget {
         ? Theme.of(context).colorScheme.primaryContainer
         : Theme.of(context).colorScheme.surfaceContainerHighest;
     final align = outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final peer = outgoing ? null : controller.selectedDevice;
+    final identity = controller.identity;
+    final title = outgoing
+        ? identity?.displayName ?? '我'
+        : (peer == null ? '对方' : controller.titleFor(peer));
+    final avatar = outgoing
+        ? (identity == null
+              ? null
+              : _DeviceAvatar(
+                  name: identity.displayName,
+                  platform: identity.platform,
+                  avatarSeed: identity.avatarSeed,
+                  avatarColor: identity.avatarColor,
+                  radius: 16,
+                ))
+        : (peer == null
+              ? null
+              : _DeviceAvatar(
+                  name: controller.titleFor(peer),
+                  platform: peer.platform,
+                  avatarSeed: peer.avatarSeed,
+                  avatarColor: peer.avatarColor,
+                  radius: 16,
+                ));
+    final bubble = Column(
+      crossAxisAlignment: align,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: 3),
+        Container(
+          constraints: const BoxConstraints(maxWidth: 520),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: message.kind == 'file'
+              ? _FileMessage(
+                  controller: controller,
+                  message: message,
+                  transfer: message.transferId == null
+                      ? null
+                      : controller.transfersById[message.transferId!],
+                )
+              : _TextMessage(message),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '${messageStatusLabel(message.status)} ${formatMessageTimestamp(message.createdAt)}',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      ],
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Column(
-        crossAxisAlignment: align,
+      child: Row(
+        mainAxisAlignment: outgoing
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            constraints: const BoxConstraints(maxWidth: 520),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: message.kind == 'file'
-                ? _FileMessage(controller: controller, message: message)
-                : _TextMessage(message),
-          ),
-          const SizedBox(height: 3),
-          Text(message.status, style: Theme.of(context).textTheme.labelSmall),
+          if (!outgoing && avatar != null) ...[
+            avatar,
+            const SizedBox(width: 8),
+          ],
+          Flexible(child: bubble),
+          if (outgoing && avatar != null) ...[const SizedBox(width: 8), avatar],
         ],
       ),
     );
@@ -528,47 +824,134 @@ class _TextMessage extends StatelessWidget {
 }
 
 class _FileMessage extends StatelessWidget {
-  const _FileMessage({required this.controller, required this.message});
+  const _FileMessage({
+    required this.controller,
+    required this.message,
+    required this.transfer,
+  });
 
   final AppController controller;
   final ChatMessage message;
+  final Transfer? transfer;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final fileSize = transfer?.fileSize ?? message.fileSize ?? 0;
+    final receivedBytes =
+        transfer?.receivedBytes ??
+        (message.status == 'sent' || message.status == 'received'
+            ? fileSize
+            : 0);
+    final progress = fileSize <= 0
+        ? null
+        : (receivedBytes / fileSize).clamp(0.0, 1.0);
+    final mimeType = transfer?.mimeType ?? message.mimeType;
+    final openTarget =
+        transfer?.savedUri ?? transfer?.savedPath ?? message.filePath;
+    final saved = transfer?.savedPath != null || transfer?.savedUri != null;
+    final showProgress =
+        progress != null &&
+        progress < 1 &&
+        (message.status == 'sending' || message.status == 'receiving');
+    return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.insert_drive_file),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                message.fileName ?? '文件',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _FilePreview(message: message, mimeType: mimeType),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.fileName ?? '文件',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (fileSize > 0)
+                    Text(
+                      formatBytes(fileSize),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  if (saved)
+                    Text(
+                      '已保存到本地',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                ],
               ),
-              if (message.fileSize != null)
-                Text(
-                  formatBytes(message.fileSize!),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
+            ),
+            IconButton(
+              tooltip: '打开',
+              onPressed: openTarget == null
+                  ? null
+                  : () => controller.openPath(openTarget),
+              icon: const Icon(Icons.open_in_new),
+            ),
+            IconButton(
+              tooltip: '打开文件夹',
+              onPressed: message.filePath == null
+                  ? null
+                  : () => controller.openFolder(message.filePath),
+              icon: const Icon(Icons.folder_open),
+            ),
+            IconButton(
+              tooltip: '保存到本地',
+              onPressed: saved
+                  ? null
+                  : () => controller.saveMessageFile(message),
+              icon: const Icon(Icons.save_alt),
+            ),
+          ],
+        ),
+        if (showProgress) ...[
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: progress),
+          const SizedBox(height: 4),
+          Text(
+            '${formatBytes(receivedBytes)} / ${formatBytes(fileSize)} · ${(progress * 100).toStringAsFixed(1)}%',
+            style: Theme.of(context).textTheme.labelSmall,
           ),
-        ),
-        IconButton(
-          tooltip: '打开',
-          onPressed: () => controller.openPath(message.filePath),
-          icon: const Icon(Icons.open_in_new),
-        ),
-        IconButton(
-          tooltip: '打开文件夹',
-          onPressed: () => controller.openFolder(message.filePath),
-          icon: const Icon(Icons.folder_open),
-        ),
+        ],
       ],
     );
+  }
+}
+
+class _FilePreview extends StatelessWidget {
+  const _FilePreview({required this.message, required this.mimeType});
+
+  final ChatMessage message;
+  final String? mimeType;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = message.filePath;
+    if (path != null &&
+        isImageFile(
+          mimeType: mimeType,
+          fileName: message.fileName,
+          path: path,
+        )) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Image.file(
+          File(path),
+          width: 64,
+          height: 64,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => const SizedBox(
+            width: 42,
+            height: 42,
+            child: Icon(Icons.image_not_supported),
+          ),
+        ),
+      );
+    }
+    return const Icon(Icons.insert_drive_file);
   }
 }
 

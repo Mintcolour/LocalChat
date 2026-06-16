@@ -56,6 +56,8 @@ class DiscoveryService {
       signingPublicKey: identity.signingPublicKey,
       exchangePublicKey: identity.exchangePublicKey,
       fingerprint: identity.fingerprint,
+      avatarSeed: identity.avatarSeed,
+      avatarColor: identity.avatarColor,
       lastSeen: DateTime.now(),
     );
     final data = utf8.encode(jsonEncode(peer.toJson()));
@@ -88,6 +90,8 @@ class DiscoveryService {
           signingPublicKey: peer.signingPublicKey,
           exchangePublicKey: peer.exchangePublicKey,
           fingerprint: peer.fingerprint,
+          avatarSeed: peer.avatarSeed,
+          avatarColor: peer.avatarColor,
         );
         _peers.add(peer);
       }

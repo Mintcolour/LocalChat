@@ -15,10 +15,15 @@ void main() {
       signingPublicKey: 'signing',
       exchangePublicKey: 'exchange',
       fingerprint: 'abcdef0123456789',
+      avatarSeed: 'abcdef0123456789',
+      avatarColor: '#2563EB',
       lastSeen: DateTime.utc(2026),
     );
 
-    final parsed = DiscoveredPeer.fromDatagram(utf8.encode(jsonEncode(peer.toJson())), '192.168.1.20');
+    final parsed = DiscoveredPeer.fromDatagram(
+      utf8.encode(jsonEncode(peer.toJson())),
+      '192.168.1.20',
+    );
 
     expect(parsed, isNotNull);
     expect(parsed!.deviceId, 'device-1');
@@ -30,6 +35,14 @@ void main() {
     for (var i = 0; i < 100; i++) {
       expect(randomCode(), matches(RegExp(r'^\d{6}$')));
     }
+  });
+
+  test('message timestamp uses compact local chat format', () {
+    expect(
+      formatMessageTimestamp(DateTime(2026, 6, 16, 9, 5, 3)),
+      '26/06/16 09:05:03',
+    );
+    expect(messageStatusLabel('received'), '已接收');
   });
 
   test('secure envelope preserves signed payload fields', () {

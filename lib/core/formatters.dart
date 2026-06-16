@@ -23,7 +23,9 @@ String randomNonce([int bytes = 16]) {
 String shortFingerprint(String value) {
   final clean = value.replaceAll(RegExp(r'[^a-fA-F0-9]'), '').toUpperCase();
   final visible = clean.length >= 16 ? clean.substring(0, 16) : clean;
-  return visible.replaceAllMapped(RegExp(r'.{4}'), (match) => '${match[0]} ').trim();
+  return visible
+      .replaceAllMapped(RegExp(r'.{4}'), (match) => '${match[0]} ')
+      .trim();
 }
 
 String formatBytes(int bytes) {
@@ -42,3 +44,22 @@ String displayHost(String? host, int? port) {
   if (host == null || host.isEmpty || port == null || port <= 0) return '未连接';
   return '$host:$port';
 }
+
+String formatMessageTimestamp(DateTime value) {
+  final local = value.toLocal();
+  return '${_two(local.year % 100)}/${_two(local.month)}/${_two(local.day)} '
+      '${_two(local.hour)}:${_two(local.minute)}:${_two(local.second)}';
+}
+
+String messageStatusLabel(String status) {
+  return switch (status) {
+    'sending' => '发送中',
+    'sent' => '已发送',
+    'failed' => '发送失败',
+    'receiving' => '接收中',
+    'received' => '已接收',
+    _ => status,
+  };
+}
+
+String _two(int value) => value.toString().padLeft(2, '0');

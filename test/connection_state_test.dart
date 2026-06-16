@@ -1,4 +1,5 @@
 import 'package:drift/native.dart';
+import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:localchat/core/peer_status.dart';
 import 'package:localchat/data/app_database.dart';
@@ -34,6 +35,8 @@ void main() {
         signingPublicKey: device.signingPublicKey,
         exchangePublicKey: device.exchangePublicKey,
         fingerprint: device.fingerprint,
+        avatarSeed: device.avatarSeed,
+        avatarColor: device.avatarColor,
       );
       await db.trustDevice(
         id: device.id,
@@ -44,6 +47,8 @@ void main() {
         signingPublicKey: device.signingPublicKey,
         exchangePublicKey: device.exchangePublicKey,
         fingerprint: device.fingerprint,
+        avatarSeed: device.avatarSeed,
+        avatarColor: device.avatarColor,
       );
 
       final conversation = await db.ensureConversation(device);
@@ -69,6 +74,8 @@ void main() {
       signingPublicKey: device.signingPublicKey,
       exchangePublicKey: device.exchangePublicKey,
       fingerprint: device.fingerprint,
+      avatarSeed: device.avatarSeed,
+      avatarColor: device.avatarColor,
     );
 
     await db.markDeviceOffline(device.id);
@@ -84,6 +91,57 @@ void main() {
     expect(updated.port, 50123);
     expect(updated.lastSeen, isNotNull);
   });
+
+  test('deleting a conversation removes messages and transfer index', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final device = _device();
+    await db.trustDevice(
+      id: device.id,
+      displayName: device.displayName,
+      platform: device.platform,
+      host: device.host!,
+      port: device.port!,
+      signingPublicKey: device.signingPublicKey,
+      exchangePublicKey: device.exchangePublicKey,
+      fingerprint: device.fingerprint,
+      avatarSeed: device.avatarSeed,
+      avatarColor: device.avatarColor,
+    );
+    final conversation = await db.ensureConversation(device);
+    await db
+        .into(db.transfers)
+        .insert(
+          TransfersCompanion.insert(
+            id: 'transfer-1',
+            peerDeviceId: device.id,
+            direction: 'in',
+            fileName: 'photo.png',
+            fileSize: 128,
+            status: 'received',
+            createdAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
+          ),
+        );
+    await db.addMessage(
+      ChatMessagesCompanion.insert(
+        id: 'message-1',
+        conversationId: conversation.id,
+        peerDeviceId: device.id,
+        direction: 'in',
+        kind: 'file',
+        status: 'received',
+        transferId: const Value('transfer-1'),
+        createdAt: DateTime.utc(2026),
+      ),
+    );
+
+    await db.deleteConversation(conversation.id);
+
+    expect(await db.getConversationForDevice(device.id), isNull);
+    expect(await db.listMessages(conversation.id), isEmpty);
+    expect(await db.listTransfersByIds(['transfer-1']), isEmpty);
+  });
 }
 
 Device _device({DateTime? lastSeen, bool neverSeen = false}) {
@@ -96,6 +154,8 @@ Device _device({DateTime? lastSeen, bool neverSeen = false}) {
     signingPublicKey: 'signing',
     exchangePublicKey: 'exchange',
     fingerprint: 'abcdef0123456789',
+    avatarSeed: 'abcdef0123456789',
+    avatarColor: '#2563EB',
     trusted: true,
     lastSeen: neverSeen ? null : lastSeen ?? DateTime.now(),
     createdAt: DateTime.utc(2026),

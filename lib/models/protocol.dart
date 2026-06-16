@@ -2,7 +2,10 @@ import 'dart:convert';
 
 const protocolVersion = 1;
 const discoveryPort = 45871;
-const defaultTransferChunkSize = 256 * 1024;
+const legacyTransferChunkSize = 256 * 1024;
+const encryptedStreamChunkSize = 4 * 1024 * 1024;
+const encryptedStreamVersion = 2;
+const encryptedStreamCapability = 'encrypted_stream_v2';
 
 enum PeerPresence { trusted, discovered }
 
@@ -16,6 +19,8 @@ class LocalIdentity {
     required this.exchangePrivateKey,
     required this.exchangePublicKey,
     required this.fingerprint,
+    required this.avatarSeed,
+    required this.avatarColor,
   });
 
   final String deviceId;
@@ -26,6 +31,8 @@ class LocalIdentity {
   final String exchangePrivateKey;
   final String exchangePublicKey;
   final String fingerprint;
+  final String avatarSeed;
+  final String avatarColor;
 }
 
 class DiscoveredPeer {
@@ -38,7 +45,16 @@ class DiscoveredPeer {
     required this.signingPublicKey,
     required this.exchangePublicKey,
     required this.fingerprint,
+    required this.avatarSeed,
+    required this.avatarColor,
     required this.lastSeen,
+    this.capabilities = const <String>[
+      'text',
+      'files',
+      'pairing',
+      'encrypted_chunks',
+      encryptedStreamCapability,
+    ],
   });
 
   final String deviceId;
@@ -49,30 +65,39 @@ class DiscoveredPeer {
   final String signingPublicKey;
   final String exchangePublicKey;
   final String fingerprint;
+  final String avatarSeed;
+  final String avatarColor;
   final DateTime lastSeen;
+  final List<String> capabilities;
 
   Map<String, Object?> toJson() => {
     'protocol_version': protocolVersion,
     'device_id': deviceId,
     'display_name': displayName,
+    'nickname': displayName,
     'platform': platform,
     'listen_port': port,
-    'capabilities': ['text', 'files', 'pairing', 'encrypted_chunks'],
+    'capabilities': capabilities,
     'signing_public_key': signingPublicKey,
     'exchange_public_key': exchangePublicKey,
     'public_key_fingerprint': fingerprint,
+    'avatar_seed': avatarSeed,
+    'avatar_color': avatarColor,
     'timestamp': lastSeen.toIso8601String(),
   };
 
   static DiscoveredPeer? fromJson(Map<String, Object?> json, String host) {
     if (json['protocol_version'] != protocolVersion) return null;
     final deviceId = json['device_id'];
-    final displayName = json['display_name'];
+    final displayName = json['nickname'] ?? json['display_name'];
     final platform = json['platform'];
     final port = json['listen_port'];
     final signingPublicKey = json['signing_public_key'];
     final exchangePublicKey = json['exchange_public_key'];
     final fingerprint = json['public_key_fingerprint'];
+    final avatarSeed = json['avatar_seed'];
+    final avatarColor = json['avatar_color'];
+    final capabilities = json['capabilities'];
     if (deviceId is! String ||
         displayName is! String ||
         platform is! String ||
@@ -91,7 +116,16 @@ class DiscoveredPeer {
       signingPublicKey: signingPublicKey,
       exchangePublicKey: exchangePublicKey,
       fingerprint: fingerprint,
+      avatarSeed: avatarSeed is String && avatarSeed.isNotEmpty
+          ? avatarSeed
+          : fingerprint,
+      avatarColor: avatarColor is String && avatarColor.isNotEmpty
+          ? avatarColor
+          : '#2563EB',
       lastSeen: DateTime.now(),
+      capabilities: capabilities is List
+          ? capabilities.whereType<String>().toList()
+          : const <String>[],
     );
   }
 
@@ -182,6 +216,8 @@ class PairRequest {
     required this.signingPublicKey,
     required this.exchangePublicKey,
     required this.fingerprint,
+    required this.avatarSeed,
+    required this.avatarColor,
     required this.code,
   });
 
@@ -191,15 +227,52 @@ class PairRequest {
   final String signingPublicKey;
   final String exchangePublicKey;
   final String fingerprint;
+  final String avatarSeed;
+  final String avatarColor;
   final String code;
 
   Map<String, Object?> toJson() => {
     'device_id': deviceId,
     'display_name': displayName,
+    'nickname': displayName,
     'platform': platform,
     'signing_public_key': signingPublicKey,
     'exchange_public_key': exchangePublicKey,
     'public_key_fingerprint': fingerprint,
+    'avatar_seed': avatarSeed,
+    'avatar_color': avatarColor,
     'code': code,
   };
+}
+
+class PendingPairRequest {
+  const PendingPairRequest({
+    required this.id,
+    required this.deviceId,
+    required this.displayName,
+    required this.platform,
+    required this.host,
+    required this.port,
+    required this.signingPublicKey,
+    required this.exchangePublicKey,
+    required this.fingerprint,
+    required this.avatarSeed,
+    required this.avatarColor,
+    required this.code,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String deviceId;
+  final String displayName;
+  final String platform;
+  final String host;
+  final int port;
+  final String signingPublicKey;
+  final String exchangePublicKey;
+  final String fingerprint;
+  final String avatarSeed;
+  final String avatarColor;
+  final String code;
+  final DateTime createdAt;
 }

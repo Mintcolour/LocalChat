@@ -40,19 +40,26 @@ class AppController extends ChangeNotifier {
   List<Device> devices = [];
   List<Conversation> conversations = [];
   List<ChatMessage> messages = [];
+  Map<String, Transfer> transfersById = {};
   Device? selectedDevice;
   Conversation? selectedConversation;
+  PendingPairRequest? pendingPairRequest;
   bool initialized = false;
   bool busy = false;
   String status = '正在启动 LocalChat...';
   String? lastError;
+  String? notificationText;
+  int notificationSerial = 0;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
 
   StreamSubscription<void>? _transportSub;
+  StreamSubscription<String>? _notificationSub;
   StreamSubscription<DiscoveredPeer>? _discoverySub;
+  StreamSubscription<PendingPairRequest>? _pairRequestSub;
   StreamSubscription<List<SharedMediaFile>>? _sharingSub;
   Timer? _presenceTimer;
+  bool _refreshingPresence = false;
 
   Future<void> initialize() async {
     busy = true;
@@ -63,10 +70,21 @@ class AppController extends ChangeNotifier {
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
       _transportSub = transportService.updates.listen((_) => refresh());
+      _notificationSub = transportService.notifications.listen((message) {
+        notificationText = message;
+        notificationSerial++;
+        status = message;
+        notifyListeners();
+      });
       _discoverySub = discoveryService.peers.listen((_) => refresh());
+      _pairRequestSub = transportService.pairRequests.listen((request) {
+        pendingPairRequest = request;
+        status = '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
+        notifyListeners();
+      });
       _presenceTimer = Timer.periodic(
         const Duration(seconds: 5),
-        (_) => notifyListeners(),
+        (_) => _refreshPeerPresence(),
       );
       await _loadSharingIntents();
       await refresh();
@@ -92,6 +110,11 @@ class AppController extends ChangeNotifier {
           selectedDevice;
       selectedConversation = await db.ensureConversation(selectedDevice!);
       messages = await db.listMessages(selectedConversation!.id);
+      final transferIds = messages
+          .map((message) => message.transferId)
+          .whereType<String>();
+      final transfers = await db.listTransfersByIds(transferIds);
+      transfersById = {for (final transfer in transfers) transfer.id: transfer};
     }
     notifyListeners();
   }
@@ -108,6 +131,7 @@ class AppController extends ChangeNotifier {
     selectedDevice = null;
     selectedConversation = null;
     messages = [];
+    transfersById = {};
     notifyListeners();
   }
 
@@ -125,6 +149,44 @@ class AppController extends ChangeNotifier {
     await db.renameConversation(conversation.id, trimmed);
     status = '会话已重命名为 $trimmed';
     await refresh();
+  }
+
+  Future<void> deleteSelectedConversation() async {
+    final conversation = selectedConversation;
+    if (conversation == null) return;
+    final title = conversation.title;
+    await db.deleteConversation(conversation.id);
+    selectedConversation = null;
+    selectedDevice = null;
+    messages = [];
+    transfersById = {};
+    status = '已删除会话 $title';
+    await refresh();
+  }
+
+  Future<void> renameLocalDevice(String title) async {
+    identity = await identityService.updateDisplayName(title);
+    status = '本机昵称已改为 ${identity!.displayName}';
+    await discoveryService.announce();
+    notifyListeners();
+  }
+
+  Future<void> approvePendingPair() async {
+    final request = pendingPairRequest;
+    if (request == null) return;
+    transportService.approvePairRequest(request.id);
+    pendingPairRequest = null;
+    status = '已允许 ${request.displayName} 配对';
+    await refresh();
+  }
+
+  Future<void> rejectPendingPair() async {
+    final request = pendingPairRequest;
+    if (request == null) return;
+    transportService.rejectPairRequest(request.id);
+    pendingPairRequest = null;
+    status = '已拒绝 ${request.displayName} 配对';
+    notifyListeners();
   }
 
   Future<void> pair(Device device) async {
@@ -213,6 +275,34 @@ class AppController extends ChangeNotifier {
       await Process.run('explorer.exe', [folder]);
     } else {
       await OpenFilex.open(folder);
+    }
+  }
+
+  Future<void> saveMessageFile(ChatMessage message) async {
+    final path = message.filePath;
+    final transferId = message.transferId;
+    if (path == null || path.isEmpty || transferId == null) return;
+    busy = true;
+    notifyListeners();
+    try {
+      final saved = await fileStore.saveToDownloads(
+        sourcePath: path,
+        fileName: message.fileName ?? p.basename(path),
+        mimeType: message.mimeType,
+      );
+      await db.markTransferSaved(
+        transferId: transferId,
+        savedPath: saved.path,
+        savedUri: saved.uri,
+      );
+      status = '已保存到 ${saved.path ?? saved.uri ?? 'Downloads/LocalChat'}';
+      await refresh();
+    } catch (error) {
+      lastError = '$error';
+      status = '保存失败';
+    } finally {
+      busy = false;
+      notifyListeners();
     }
   }
 
@@ -316,10 +406,26 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _refreshPeerPresence() async {
+    if (_refreshingPresence) return;
+    _refreshingPresence = true;
+    try {
+      final peers = await db.listTrustedDevices();
+      for (final peer in peers) {
+        await transportService.checkPeer(peer);
+      }
+      await refresh();
+    } finally {
+      _refreshingPresence = false;
+    }
+  }
+
   @override
   void dispose() {
     _transportSub?.cancel();
+    _notificationSub?.cancel();
     _discoverySub?.cancel();
+    _pairRequestSub?.cancel();
     _sharingSub?.cancel();
     _presenceTimer?.cancel();
     discoveryService.stop();

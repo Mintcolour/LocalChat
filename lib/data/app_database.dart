@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import '../core/device_profile.dart';
+
 part 'app_database.g.dart';
 
 class Devices extends Table {
@@ -12,6 +14,8 @@ class Devices extends Table {
   TextColumn get signingPublicKey => text()();
   TextColumn get exchangePublicKey => text()();
   TextColumn get fingerprint => text()();
+  TextColumn get avatarSeed => text().withDefault(const Constant(''))();
+  TextColumn get avatarColor => text().withDefault(const Constant('#2563EB'))();
   BoolColumn get trusted => boolean().withDefault(const Constant(false))();
   DateTimeColumn get lastSeen => dateTime().nullable()();
   DateTimeColumn get createdAt => dateTime()();
@@ -40,6 +44,7 @@ class ChatMessages extends Table {
   TextColumn get fileName => text().nullable()();
   TextColumn get filePath => text().nullable()();
   IntColumn get fileSize => integer().nullable()();
+  TextColumn get mimeType => text().nullable()();
   TextColumn get status => text()();
   TextColumn get transferId => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
@@ -56,6 +61,9 @@ class Transfers extends Table {
   TextColumn get filePath => text().nullable()();
   IntColumn get fileSize => integer()();
   TextColumn get sha256 => text().nullable()();
+  TextColumn get mimeType => text().nullable()();
+  TextColumn get savedPath => text().nullable()();
+  TextColumn get savedUri => text().nullable()();
   TextColumn get status => text()();
   IntColumn get receivedBytes => integer().withDefault(const Constant(0))();
   IntColumn get totalChunks => integer().withDefault(const Constant(0))();
@@ -82,7 +90,33 @@ class AppDatabase extends _$AppDatabase {
     : super(executor ?? driftDatabase(name: 'localchat'));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.addColumn(devices, devices.avatarSeed);
+        await m.addColumn(devices, devices.avatarColor);
+        await m.addColumn(chatMessages, chatMessages.mimeType);
+        await m.addColumn(transfers, transfers.mimeType);
+        await m.addColumn(transfers, transfers.savedPath);
+        await m.addColumn(transfers, transfers.savedUri);
+        final rows = await select(devices).get();
+        for (final device in rows) {
+          final seed = avatarSeedFor(device.id, device.fingerprint);
+          await (update(
+            devices,
+          )..where((tbl) => tbl.id.equals(device.id))).write(
+            DevicesCompanion(
+              avatarSeed: Value(seed),
+              avatarColor: Value(avatarColorFor(seed)),
+            ),
+          );
+        }
+      }
+    },
+  );
 
   Future<String?> getSetting(String key) async {
     final row = await (select(
@@ -131,6 +165,8 @@ class AppDatabase extends _$AppDatabase {
     required String signingPublicKey,
     required String exchangePublicKey,
     required String fingerprint,
+    required String avatarSeed,
+    required String avatarColor,
   }) async {
     final existing = await getDevice(id);
     await into(devices).insertOnConflictUpdate(
@@ -141,6 +177,8 @@ class AppDatabase extends _$AppDatabase {
         signingPublicKey: signingPublicKey,
         exchangePublicKey: exchangePublicKey,
         fingerprint: fingerprint,
+        avatarSeed: Value(avatarSeed),
+        avatarColor: Value(avatarColor),
         trusted: Value(existing?.trusted ?? false),
         host: Value(host),
         port: Value(port),
@@ -159,6 +197,8 @@ class AppDatabase extends _$AppDatabase {
     required String signingPublicKey,
     required String exchangePublicKey,
     required String fingerprint,
+    required String avatarSeed,
+    required String avatarColor,
   }) async {
     final existing = await getDevice(id);
     await into(devices).insertOnConflictUpdate(
@@ -169,6 +209,8 @@ class AppDatabase extends _$AppDatabase {
         signingPublicKey: signingPublicKey,
         exchangePublicKey: exchangePublicKey,
         fingerprint: fingerprint,
+        avatarSeed: Value(avatarSeed),
+        avatarColor: Value(avatarColor),
         trusted: const Value(true),
         host: Value(host),
         port: Value(port),
@@ -235,11 +277,38 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<void> deleteConversation(String conversationId) async {
+    final rows = await (select(
+      chatMessages,
+    )..where((tbl) => tbl.conversationId.equals(conversationId))).get();
+    final transferIds = rows
+        .map((message) => message.transferId)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (transferIds.isNotEmpty) {
+      await (delete(transfers)..where((tbl) => tbl.id.isIn(transferIds))).go();
+    }
+    await (delete(
+      chatMessages,
+    )..where((tbl) => tbl.conversationId.equals(conversationId))).go();
+    await (delete(
+      conversations,
+    )..where((tbl) => tbl.id.equals(conversationId))).go();
+  }
+
   Future<List<ChatMessage>> listMessages(String conversationId) {
     return (select(chatMessages)
           ..where((tbl) => tbl.conversationId.equals(conversationId))
           ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)]))
         .get();
+  }
+
+  Future<List<Transfer>> listTransfersByIds(Iterable<String> ids) {
+    final values = ids.where((id) => id.isNotEmpty).toSet().toList();
+    if (values.isEmpty) return Future.value(const <Transfer>[]);
+    return (select(transfers)..where((tbl) => tbl.id.isIn(values))).get();
   }
 
   Future<void> addMessage(ChatMessagesCompanion message) async {
@@ -256,4 +325,18 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> clearTransferIndex() => delete(transfers).go();
+
+  Future<void> markTransferSaved({
+    required String transferId,
+    String? savedPath,
+    String? savedUri,
+  }) async {
+    await (update(transfers)..where((tbl) => tbl.id.equals(transferId))).write(
+      TransfersCompanion(
+        savedPath: Value(savedPath),
+        savedUri: Value(savedUri),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
 }

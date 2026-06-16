@@ -91,6 +91,30 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _avatarSeedMeta = const VerificationMeta(
+    'avatarSeed',
+  );
+  @override
+  late final GeneratedColumn<String> avatarSeed = GeneratedColumn<String>(
+    'avatar_seed',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _avatarColorMeta = const VerificationMeta(
+    'avatarColor',
+  );
+  @override
+  late final GeneratedColumn<String> avatarColor = GeneratedColumn<String>(
+    'avatar_color',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('#2563EB'),
+  );
   static const VerificationMeta _trustedMeta = const VerificationMeta(
     'trusted',
   );
@@ -138,6 +162,8 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     signingPublicKey,
     exchangePublicKey,
     fingerprint,
+    avatarSeed,
+    avatarColor,
     trusted,
     lastSeen,
     createdAt,
@@ -223,6 +249,21 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     } else if (isInserting) {
       context.missing(_fingerprintMeta);
     }
+    if (data.containsKey('avatar_seed')) {
+      context.handle(
+        _avatarSeedMeta,
+        avatarSeed.isAcceptableOrUnknown(data['avatar_seed']!, _avatarSeedMeta),
+      );
+    }
+    if (data.containsKey('avatar_color')) {
+      context.handle(
+        _avatarColorMeta,
+        avatarColor.isAcceptableOrUnknown(
+          data['avatar_color']!,
+          _avatarColorMeta,
+        ),
+      );
+    }
     if (data.containsKey('trusted')) {
       context.handle(
         _trustedMeta,
@@ -284,6 +325,14 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
         DriftSqlType.string,
         data['${effectivePrefix}fingerprint'],
       )!,
+      avatarSeed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}avatar_seed'],
+      )!,
+      avatarColor: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}avatar_color'],
+      )!,
       trusted: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}trusted'],
@@ -314,6 +363,8 @@ class Device extends DataClass implements Insertable<Device> {
   final String signingPublicKey;
   final String exchangePublicKey;
   final String fingerprint;
+  final String avatarSeed;
+  final String avatarColor;
   final bool trusted;
   final DateTime? lastSeen;
   final DateTime createdAt;
@@ -326,6 +377,8 @@ class Device extends DataClass implements Insertable<Device> {
     required this.signingPublicKey,
     required this.exchangePublicKey,
     required this.fingerprint,
+    required this.avatarSeed,
+    required this.avatarColor,
     required this.trusted,
     this.lastSeen,
     required this.createdAt,
@@ -345,6 +398,8 @@ class Device extends DataClass implements Insertable<Device> {
     map['signing_public_key'] = Variable<String>(signingPublicKey);
     map['exchange_public_key'] = Variable<String>(exchangePublicKey);
     map['fingerprint'] = Variable<String>(fingerprint);
+    map['avatar_seed'] = Variable<String>(avatarSeed);
+    map['avatar_color'] = Variable<String>(avatarColor);
     map['trusted'] = Variable<bool>(trusted);
     if (!nullToAbsent || lastSeen != null) {
       map['last_seen'] = Variable<DateTime>(lastSeen);
@@ -363,6 +418,8 @@ class Device extends DataClass implements Insertable<Device> {
       signingPublicKey: Value(signingPublicKey),
       exchangePublicKey: Value(exchangePublicKey),
       fingerprint: Value(fingerprint),
+      avatarSeed: Value(avatarSeed),
+      avatarColor: Value(avatarColor),
       trusted: Value(trusted),
       lastSeen: lastSeen == null && nullToAbsent
           ? const Value.absent()
@@ -385,6 +442,8 @@ class Device extends DataClass implements Insertable<Device> {
       signingPublicKey: serializer.fromJson<String>(json['signingPublicKey']),
       exchangePublicKey: serializer.fromJson<String>(json['exchangePublicKey']),
       fingerprint: serializer.fromJson<String>(json['fingerprint']),
+      avatarSeed: serializer.fromJson<String>(json['avatarSeed']),
+      avatarColor: serializer.fromJson<String>(json['avatarColor']),
       trusted: serializer.fromJson<bool>(json['trusted']),
       lastSeen: serializer.fromJson<DateTime?>(json['lastSeen']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -402,6 +461,8 @@ class Device extends DataClass implements Insertable<Device> {
       'signingPublicKey': serializer.toJson<String>(signingPublicKey),
       'exchangePublicKey': serializer.toJson<String>(exchangePublicKey),
       'fingerprint': serializer.toJson<String>(fingerprint),
+      'avatarSeed': serializer.toJson<String>(avatarSeed),
+      'avatarColor': serializer.toJson<String>(avatarColor),
       'trusted': serializer.toJson<bool>(trusted),
       'lastSeen': serializer.toJson<DateTime?>(lastSeen),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -417,6 +478,8 @@ class Device extends DataClass implements Insertable<Device> {
     String? signingPublicKey,
     String? exchangePublicKey,
     String? fingerprint,
+    String? avatarSeed,
+    String? avatarColor,
     bool? trusted,
     Value<DateTime?> lastSeen = const Value.absent(),
     DateTime? createdAt,
@@ -429,6 +492,8 @@ class Device extends DataClass implements Insertable<Device> {
     signingPublicKey: signingPublicKey ?? this.signingPublicKey,
     exchangePublicKey: exchangePublicKey ?? this.exchangePublicKey,
     fingerprint: fingerprint ?? this.fingerprint,
+    avatarSeed: avatarSeed ?? this.avatarSeed,
+    avatarColor: avatarColor ?? this.avatarColor,
     trusted: trusted ?? this.trusted,
     lastSeen: lastSeen.present ? lastSeen.value : this.lastSeen,
     createdAt: createdAt ?? this.createdAt,
@@ -451,6 +516,12 @@ class Device extends DataClass implements Insertable<Device> {
       fingerprint: data.fingerprint.present
           ? data.fingerprint.value
           : this.fingerprint,
+      avatarSeed: data.avatarSeed.present
+          ? data.avatarSeed.value
+          : this.avatarSeed,
+      avatarColor: data.avatarColor.present
+          ? data.avatarColor.value
+          : this.avatarColor,
       trusted: data.trusted.present ? data.trusted.value : this.trusted,
       lastSeen: data.lastSeen.present ? data.lastSeen.value : this.lastSeen,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -468,6 +539,8 @@ class Device extends DataClass implements Insertable<Device> {
           ..write('signingPublicKey: $signingPublicKey, ')
           ..write('exchangePublicKey: $exchangePublicKey, ')
           ..write('fingerprint: $fingerprint, ')
+          ..write('avatarSeed: $avatarSeed, ')
+          ..write('avatarColor: $avatarColor, ')
           ..write('trusted: $trusted, ')
           ..write('lastSeen: $lastSeen, ')
           ..write('createdAt: $createdAt')
@@ -485,6 +558,8 @@ class Device extends DataClass implements Insertable<Device> {
     signingPublicKey,
     exchangePublicKey,
     fingerprint,
+    avatarSeed,
+    avatarColor,
     trusted,
     lastSeen,
     createdAt,
@@ -501,6 +576,8 @@ class Device extends DataClass implements Insertable<Device> {
           other.signingPublicKey == this.signingPublicKey &&
           other.exchangePublicKey == this.exchangePublicKey &&
           other.fingerprint == this.fingerprint &&
+          other.avatarSeed == this.avatarSeed &&
+          other.avatarColor == this.avatarColor &&
           other.trusted == this.trusted &&
           other.lastSeen == this.lastSeen &&
           other.createdAt == this.createdAt);
@@ -515,6 +592,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
   final Value<String> signingPublicKey;
   final Value<String> exchangePublicKey;
   final Value<String> fingerprint;
+  final Value<String> avatarSeed;
+  final Value<String> avatarColor;
   final Value<bool> trusted;
   final Value<DateTime?> lastSeen;
   final Value<DateTime> createdAt;
@@ -528,6 +607,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     this.signingPublicKey = const Value.absent(),
     this.exchangePublicKey = const Value.absent(),
     this.fingerprint = const Value.absent(),
+    this.avatarSeed = const Value.absent(),
+    this.avatarColor = const Value.absent(),
     this.trusted = const Value.absent(),
     this.lastSeen = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -542,6 +623,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     required String signingPublicKey,
     required String exchangePublicKey,
     required String fingerprint,
+    this.avatarSeed = const Value.absent(),
+    this.avatarColor = const Value.absent(),
     this.trusted = const Value.absent(),
     this.lastSeen = const Value.absent(),
     required DateTime createdAt,
@@ -562,6 +645,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Expression<String>? signingPublicKey,
     Expression<String>? exchangePublicKey,
     Expression<String>? fingerprint,
+    Expression<String>? avatarSeed,
+    Expression<String>? avatarColor,
     Expression<bool>? trusted,
     Expression<DateTime>? lastSeen,
     Expression<DateTime>? createdAt,
@@ -576,6 +661,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       if (signingPublicKey != null) 'signing_public_key': signingPublicKey,
       if (exchangePublicKey != null) 'exchange_public_key': exchangePublicKey,
       if (fingerprint != null) 'fingerprint': fingerprint,
+      if (avatarSeed != null) 'avatar_seed': avatarSeed,
+      if (avatarColor != null) 'avatar_color': avatarColor,
       if (trusted != null) 'trusted': trusted,
       if (lastSeen != null) 'last_seen': lastSeen,
       if (createdAt != null) 'created_at': createdAt,
@@ -592,6 +679,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Value<String>? signingPublicKey,
     Value<String>? exchangePublicKey,
     Value<String>? fingerprint,
+    Value<String>? avatarSeed,
+    Value<String>? avatarColor,
     Value<bool>? trusted,
     Value<DateTime?>? lastSeen,
     Value<DateTime>? createdAt,
@@ -606,6 +695,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       signingPublicKey: signingPublicKey ?? this.signingPublicKey,
       exchangePublicKey: exchangePublicKey ?? this.exchangePublicKey,
       fingerprint: fingerprint ?? this.fingerprint,
+      avatarSeed: avatarSeed ?? this.avatarSeed,
+      avatarColor: avatarColor ?? this.avatarColor,
       trusted: trusted ?? this.trusted,
       lastSeen: lastSeen ?? this.lastSeen,
       createdAt: createdAt ?? this.createdAt,
@@ -640,6 +731,12 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     if (fingerprint.present) {
       map['fingerprint'] = Variable<String>(fingerprint.value);
     }
+    if (avatarSeed.present) {
+      map['avatar_seed'] = Variable<String>(avatarSeed.value);
+    }
+    if (avatarColor.present) {
+      map['avatar_color'] = Variable<String>(avatarColor.value);
+    }
     if (trusted.present) {
       map['trusted'] = Variable<bool>(trusted.value);
     }
@@ -666,6 +763,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
           ..write('signingPublicKey: $signingPublicKey, ')
           ..write('exchangePublicKey: $exchangePublicKey, ')
           ..write('fingerprint: $fingerprint, ')
+          ..write('avatarSeed: $avatarSeed, ')
+          ..write('avatarColor: $avatarColor, ')
           ..write('trusted: $trusted, ')
           ..write('lastSeen: $lastSeen, ')
           ..write('createdAt: $createdAt, ')
@@ -1087,6 +1186,17 @@ class $ChatMessagesTable extends ChatMessages
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _mimeTypeMeta = const VerificationMeta(
+    'mimeType',
+  );
+  @override
+  late final GeneratedColumn<String> mimeType = GeneratedColumn<String>(
+    'mime_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -1129,6 +1239,7 @@ class $ChatMessagesTable extends ChatMessages
     fileName,
     filePath,
     fileSize,
+    mimeType,
     status,
     transferId,
     createdAt,
@@ -1212,6 +1323,12 @@ class $ChatMessagesTable extends ChatMessages
         fileSize.isAcceptableOrUnknown(data['file_size']!, _fileSizeMeta),
       );
     }
+    if (data.containsKey('mime_type')) {
+      context.handle(
+        _mimeTypeMeta,
+        mimeType.isAcceptableOrUnknown(data['mime_type']!, _mimeTypeMeta),
+      );
+    }
     if (data.containsKey('status')) {
       context.handle(
         _statusMeta,
@@ -1279,6 +1396,10 @@ class $ChatMessagesTable extends ChatMessages
         DriftSqlType.int,
         data['${effectivePrefix}file_size'],
       ),
+      mimeType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}mime_type'],
+      ),
       status: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}status'],
@@ -1310,6 +1431,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
   final String? fileName;
   final String? filePath;
   final int? fileSize;
+  final String? mimeType;
   final String status;
   final String? transferId;
   final DateTime createdAt;
@@ -1323,6 +1445,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     this.fileName,
     this.filePath,
     this.fileSize,
+    this.mimeType,
     required this.status,
     this.transferId,
     required this.createdAt,
@@ -1346,6 +1469,9 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     }
     if (!nullToAbsent || fileSize != null) {
       map['file_size'] = Variable<int>(fileSize);
+    }
+    if (!nullToAbsent || mimeType != null) {
+      map['mime_type'] = Variable<String>(mimeType);
     }
     map['status'] = Variable<String>(status);
     if (!nullToAbsent || transferId != null) {
@@ -1372,6 +1498,9 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       fileSize: fileSize == null && nullToAbsent
           ? const Value.absent()
           : Value(fileSize),
+      mimeType: mimeType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mimeType),
       status: Value(status),
       transferId: transferId == null && nullToAbsent
           ? const Value.absent()
@@ -1395,6 +1524,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       fileName: serializer.fromJson<String?>(json['fileName']),
       filePath: serializer.fromJson<String?>(json['filePath']),
       fileSize: serializer.fromJson<int?>(json['fileSize']),
+      mimeType: serializer.fromJson<String?>(json['mimeType']),
       status: serializer.fromJson<String>(json['status']),
       transferId: serializer.fromJson<String?>(json['transferId']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -1413,6 +1543,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       'fileName': serializer.toJson<String?>(fileName),
       'filePath': serializer.toJson<String?>(filePath),
       'fileSize': serializer.toJson<int?>(fileSize),
+      'mimeType': serializer.toJson<String?>(mimeType),
       'status': serializer.toJson<String>(status),
       'transferId': serializer.toJson<String?>(transferId),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -1429,6 +1560,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     Value<String?> fileName = const Value.absent(),
     Value<String?> filePath = const Value.absent(),
     Value<int?> fileSize = const Value.absent(),
+    Value<String?> mimeType = const Value.absent(),
     String? status,
     Value<String?> transferId = const Value.absent(),
     DateTime? createdAt,
@@ -1442,6 +1574,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     fileName: fileName.present ? fileName.value : this.fileName,
     filePath: filePath.present ? filePath.value : this.filePath,
     fileSize: fileSize.present ? fileSize.value : this.fileSize,
+    mimeType: mimeType.present ? mimeType.value : this.mimeType,
     status: status ?? this.status,
     transferId: transferId.present ? transferId.value : this.transferId,
     createdAt: createdAt ?? this.createdAt,
@@ -1461,6 +1594,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       fileName: data.fileName.present ? data.fileName.value : this.fileName,
       filePath: data.filePath.present ? data.filePath.value : this.filePath,
       fileSize: data.fileSize.present ? data.fileSize.value : this.fileSize,
+      mimeType: data.mimeType.present ? data.mimeType.value : this.mimeType,
       status: data.status.present ? data.status.value : this.status,
       transferId: data.transferId.present
           ? data.transferId.value
@@ -1481,6 +1615,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           ..write('fileName: $fileName, ')
           ..write('filePath: $filePath, ')
           ..write('fileSize: $fileSize, ')
+          ..write('mimeType: $mimeType, ')
           ..write('status: $status, ')
           ..write('transferId: $transferId, ')
           ..write('createdAt: $createdAt')
@@ -1499,6 +1634,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     fileName,
     filePath,
     fileSize,
+    mimeType,
     status,
     transferId,
     createdAt,
@@ -1516,6 +1652,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           other.fileName == this.fileName &&
           other.filePath == this.filePath &&
           other.fileSize == this.fileSize &&
+          other.mimeType == this.mimeType &&
           other.status == this.status &&
           other.transferId == this.transferId &&
           other.createdAt == this.createdAt);
@@ -1531,6 +1668,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
   final Value<String?> fileName;
   final Value<String?> filePath;
   final Value<int?> fileSize;
+  final Value<String?> mimeType;
   final Value<String> status;
   final Value<String?> transferId;
   final Value<DateTime> createdAt;
@@ -1545,6 +1683,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     this.fileName = const Value.absent(),
     this.filePath = const Value.absent(),
     this.fileSize = const Value.absent(),
+    this.mimeType = const Value.absent(),
     this.status = const Value.absent(),
     this.transferId = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1560,6 +1699,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     this.fileName = const Value.absent(),
     this.filePath = const Value.absent(),
     this.fileSize = const Value.absent(),
+    this.mimeType = const Value.absent(),
     required String status,
     this.transferId = const Value.absent(),
     required DateTime createdAt,
@@ -1581,6 +1721,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     Expression<String>? fileName,
     Expression<String>? filePath,
     Expression<int>? fileSize,
+    Expression<String>? mimeType,
     Expression<String>? status,
     Expression<String>? transferId,
     Expression<DateTime>? createdAt,
@@ -1596,6 +1737,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       if (fileName != null) 'file_name': fileName,
       if (filePath != null) 'file_path': filePath,
       if (fileSize != null) 'file_size': fileSize,
+      if (mimeType != null) 'mime_type': mimeType,
       if (status != null) 'status': status,
       if (transferId != null) 'transfer_id': transferId,
       if (createdAt != null) 'created_at': createdAt,
@@ -1613,6 +1755,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     Value<String?>? fileName,
     Value<String?>? filePath,
     Value<int?>? fileSize,
+    Value<String?>? mimeType,
     Value<String>? status,
     Value<String?>? transferId,
     Value<DateTime>? createdAt,
@@ -1628,6 +1771,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       fileName: fileName ?? this.fileName,
       filePath: filePath ?? this.filePath,
       fileSize: fileSize ?? this.fileSize,
+      mimeType: mimeType ?? this.mimeType,
       status: status ?? this.status,
       transferId: transferId ?? this.transferId,
       createdAt: createdAt ?? this.createdAt,
@@ -1665,6 +1809,9 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     if (fileSize.present) {
       map['file_size'] = Variable<int>(fileSize.value);
     }
+    if (mimeType.present) {
+      map['mime_type'] = Variable<String>(mimeType.value);
+    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
@@ -1692,6 +1839,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
           ..write('fileName: $fileName, ')
           ..write('filePath: $filePath, ')
           ..write('fileSize: $fileSize, ')
+          ..write('mimeType: $mimeType, ')
           ..write('status: $status, ')
           ..write('transferId: $transferId, ')
           ..write('createdAt: $createdAt, ')
@@ -1780,6 +1928,39 @@ class $TransfersTable extends Transfers
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _mimeTypeMeta = const VerificationMeta(
+    'mimeType',
+  );
+  @override
+  late final GeneratedColumn<String> mimeType = GeneratedColumn<String>(
+    'mime_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _savedPathMeta = const VerificationMeta(
+    'savedPath',
+  );
+  @override
+  late final GeneratedColumn<String> savedPath = GeneratedColumn<String>(
+    'saved_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _savedUriMeta = const VerificationMeta(
+    'savedUri',
+  );
+  @override
+  late final GeneratedColumn<String> savedUri = GeneratedColumn<String>(
+    'saved_uri',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -1844,6 +2025,9 @@ class $TransfersTable extends Transfers
     filePath,
     fileSize,
     sha256,
+    mimeType,
+    savedPath,
+    savedUri,
     status,
     receivedBytes,
     totalChunks,
@@ -1912,6 +2096,24 @@ class $TransfersTable extends Transfers
       context.handle(
         _sha256Meta,
         sha256.isAcceptableOrUnknown(data['sha256']!, _sha256Meta),
+      );
+    }
+    if (data.containsKey('mime_type')) {
+      context.handle(
+        _mimeTypeMeta,
+        mimeType.isAcceptableOrUnknown(data['mime_type']!, _mimeTypeMeta),
+      );
+    }
+    if (data.containsKey('saved_path')) {
+      context.handle(
+        _savedPathMeta,
+        savedPath.isAcceptableOrUnknown(data['saved_path']!, _savedPathMeta),
+      );
+    }
+    if (data.containsKey('saved_uri')) {
+      context.handle(
+        _savedUriMeta,
+        savedUri.isAcceptableOrUnknown(data['saved_uri']!, _savedUriMeta),
       );
     }
     if (data.containsKey('status')) {
@@ -1993,6 +2195,18 @@ class $TransfersTable extends Transfers
         DriftSqlType.string,
         data['${effectivePrefix}sha256'],
       ),
+      mimeType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}mime_type'],
+      ),
+      savedPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}saved_path'],
+      ),
+      savedUri: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}saved_uri'],
+      ),
       status: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}status'],
@@ -2030,6 +2244,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
   final String? filePath;
   final int fileSize;
   final String? sha256;
+  final String? mimeType;
+  final String? savedPath;
+  final String? savedUri;
   final String status;
   final int receivedBytes;
   final int totalChunks;
@@ -2043,6 +2260,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     this.filePath,
     required this.fileSize,
     this.sha256,
+    this.mimeType,
+    this.savedPath,
+    this.savedUri,
     required this.status,
     required this.receivedBytes,
     required this.totalChunks,
@@ -2062,6 +2282,15 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     map['file_size'] = Variable<int>(fileSize);
     if (!nullToAbsent || sha256 != null) {
       map['sha256'] = Variable<String>(sha256);
+    }
+    if (!nullToAbsent || mimeType != null) {
+      map['mime_type'] = Variable<String>(mimeType);
+    }
+    if (!nullToAbsent || savedPath != null) {
+      map['saved_path'] = Variable<String>(savedPath);
+    }
+    if (!nullToAbsent || savedUri != null) {
+      map['saved_uri'] = Variable<String>(savedUri);
     }
     map['status'] = Variable<String>(status);
     map['received_bytes'] = Variable<int>(receivedBytes);
@@ -2084,6 +2313,15 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       sha256: sha256 == null && nullToAbsent
           ? const Value.absent()
           : Value(sha256),
+      mimeType: mimeType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mimeType),
+      savedPath: savedPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(savedPath),
+      savedUri: savedUri == null && nullToAbsent
+          ? const Value.absent()
+          : Value(savedUri),
       status: Value(status),
       receivedBytes: Value(receivedBytes),
       totalChunks: Value(totalChunks),
@@ -2105,6 +2343,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       filePath: serializer.fromJson<String?>(json['filePath']),
       fileSize: serializer.fromJson<int>(json['fileSize']),
       sha256: serializer.fromJson<String?>(json['sha256']),
+      mimeType: serializer.fromJson<String?>(json['mimeType']),
+      savedPath: serializer.fromJson<String?>(json['savedPath']),
+      savedUri: serializer.fromJson<String?>(json['savedUri']),
       status: serializer.fromJson<String>(json['status']),
       receivedBytes: serializer.fromJson<int>(json['receivedBytes']),
       totalChunks: serializer.fromJson<int>(json['totalChunks']),
@@ -2123,6 +2364,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       'filePath': serializer.toJson<String?>(filePath),
       'fileSize': serializer.toJson<int>(fileSize),
       'sha256': serializer.toJson<String?>(sha256),
+      'mimeType': serializer.toJson<String?>(mimeType),
+      'savedPath': serializer.toJson<String?>(savedPath),
+      'savedUri': serializer.toJson<String?>(savedUri),
       'status': serializer.toJson<String>(status),
       'receivedBytes': serializer.toJson<int>(receivedBytes),
       'totalChunks': serializer.toJson<int>(totalChunks),
@@ -2139,6 +2383,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     Value<String?> filePath = const Value.absent(),
     int? fileSize,
     Value<String?> sha256 = const Value.absent(),
+    Value<String?> mimeType = const Value.absent(),
+    Value<String?> savedPath = const Value.absent(),
+    Value<String?> savedUri = const Value.absent(),
     String? status,
     int? receivedBytes,
     int? totalChunks,
@@ -2152,6 +2399,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     filePath: filePath.present ? filePath.value : this.filePath,
     fileSize: fileSize ?? this.fileSize,
     sha256: sha256.present ? sha256.value : this.sha256,
+    mimeType: mimeType.present ? mimeType.value : this.mimeType,
+    savedPath: savedPath.present ? savedPath.value : this.savedPath,
+    savedUri: savedUri.present ? savedUri.value : this.savedUri,
     status: status ?? this.status,
     receivedBytes: receivedBytes ?? this.receivedBytes,
     totalChunks: totalChunks ?? this.totalChunks,
@@ -2169,6 +2419,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       filePath: data.filePath.present ? data.filePath.value : this.filePath,
       fileSize: data.fileSize.present ? data.fileSize.value : this.fileSize,
       sha256: data.sha256.present ? data.sha256.value : this.sha256,
+      mimeType: data.mimeType.present ? data.mimeType.value : this.mimeType,
+      savedPath: data.savedPath.present ? data.savedPath.value : this.savedPath,
+      savedUri: data.savedUri.present ? data.savedUri.value : this.savedUri,
       status: data.status.present ? data.status.value : this.status,
       receivedBytes: data.receivedBytes.present
           ? data.receivedBytes.value
@@ -2191,6 +2444,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           ..write('filePath: $filePath, ')
           ..write('fileSize: $fileSize, ')
           ..write('sha256: $sha256, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('savedPath: $savedPath, ')
+          ..write('savedUri: $savedUri, ')
           ..write('status: $status, ')
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
@@ -2209,6 +2465,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     filePath,
     fileSize,
     sha256,
+    mimeType,
+    savedPath,
+    savedUri,
     status,
     receivedBytes,
     totalChunks,
@@ -2226,6 +2485,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           other.filePath == this.filePath &&
           other.fileSize == this.fileSize &&
           other.sha256 == this.sha256 &&
+          other.mimeType == this.mimeType &&
+          other.savedPath == this.savedPath &&
+          other.savedUri == this.savedUri &&
           other.status == this.status &&
           other.receivedBytes == this.receivedBytes &&
           other.totalChunks == this.totalChunks &&
@@ -2241,6 +2503,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
   final Value<String?> filePath;
   final Value<int> fileSize;
   final Value<String?> sha256;
+  final Value<String?> mimeType;
+  final Value<String?> savedPath;
+  final Value<String?> savedUri;
   final Value<String> status;
   final Value<int> receivedBytes;
   final Value<int> totalChunks;
@@ -2255,6 +2520,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.filePath = const Value.absent(),
     this.fileSize = const Value.absent(),
     this.sha256 = const Value.absent(),
+    this.mimeType = const Value.absent(),
+    this.savedPath = const Value.absent(),
+    this.savedUri = const Value.absent(),
     this.status = const Value.absent(),
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
@@ -2270,6 +2538,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.filePath = const Value.absent(),
     required int fileSize,
     this.sha256 = const Value.absent(),
+    this.mimeType = const Value.absent(),
+    this.savedPath = const Value.absent(),
+    this.savedUri = const Value.absent(),
     required String status,
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
@@ -2292,6 +2563,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Expression<String>? filePath,
     Expression<int>? fileSize,
     Expression<String>? sha256,
+    Expression<String>? mimeType,
+    Expression<String>? savedPath,
+    Expression<String>? savedUri,
     Expression<String>? status,
     Expression<int>? receivedBytes,
     Expression<int>? totalChunks,
@@ -2307,6 +2581,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       if (filePath != null) 'file_path': filePath,
       if (fileSize != null) 'file_size': fileSize,
       if (sha256 != null) 'sha256': sha256,
+      if (mimeType != null) 'mime_type': mimeType,
+      if (savedPath != null) 'saved_path': savedPath,
+      if (savedUri != null) 'saved_uri': savedUri,
       if (status != null) 'status': status,
       if (receivedBytes != null) 'received_bytes': receivedBytes,
       if (totalChunks != null) 'total_chunks': totalChunks,
@@ -2324,6 +2601,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Value<String?>? filePath,
     Value<int>? fileSize,
     Value<String?>? sha256,
+    Value<String?>? mimeType,
+    Value<String?>? savedPath,
+    Value<String?>? savedUri,
     Value<String>? status,
     Value<int>? receivedBytes,
     Value<int>? totalChunks,
@@ -2339,6 +2619,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       filePath: filePath ?? this.filePath,
       fileSize: fileSize ?? this.fileSize,
       sha256: sha256 ?? this.sha256,
+      mimeType: mimeType ?? this.mimeType,
+      savedPath: savedPath ?? this.savedPath,
+      savedUri: savedUri ?? this.savedUri,
       status: status ?? this.status,
       receivedBytes: receivedBytes ?? this.receivedBytes,
       totalChunks: totalChunks ?? this.totalChunks,
@@ -2372,6 +2655,15 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     if (sha256.present) {
       map['sha256'] = Variable<String>(sha256.value);
     }
+    if (mimeType.present) {
+      map['mime_type'] = Variable<String>(mimeType.value);
+    }
+    if (savedPath.present) {
+      map['saved_path'] = Variable<String>(savedPath.value);
+    }
+    if (savedUri.present) {
+      map['saved_uri'] = Variable<String>(savedUri.value);
+    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
@@ -2403,6 +2695,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
           ..write('filePath: $filePath, ')
           ..write('fileSize: $fileSize, ')
           ..write('sha256: $sha256, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('savedPath: $savedPath, ')
+          ..write('savedUri: $savedUri, ')
           ..write('status: $status, ')
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
@@ -2650,6 +2945,8 @@ typedef $$DevicesTableCreateCompanionBuilder =
       required String signingPublicKey,
       required String exchangePublicKey,
       required String fingerprint,
+      Value<String> avatarSeed,
+      Value<String> avatarColor,
       Value<bool> trusted,
       Value<DateTime?> lastSeen,
       required DateTime createdAt,
@@ -2665,6 +2962,8 @@ typedef $$DevicesTableUpdateCompanionBuilder =
       Value<String> signingPublicKey,
       Value<String> exchangePublicKey,
       Value<String> fingerprint,
+      Value<String> avatarSeed,
+      Value<String> avatarColor,
       Value<bool> trusted,
       Value<DateTime?> lastSeen,
       Value<DateTime> createdAt,
@@ -2717,6 +3016,16 @@ class $$DevicesTableFilterComposer
 
   ColumnFilters<String> get fingerprint => $composableBuilder(
     column: $table.fingerprint,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get avatarSeed => $composableBuilder(
+    column: $table.avatarSeed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get avatarColor => $composableBuilder(
+    column: $table.avatarColor,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2785,6 +3094,16 @@ class $$DevicesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get avatarSeed => $composableBuilder(
+    column: $table.avatarSeed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get avatarColor => $composableBuilder(
+    column: $table.avatarColor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get trusted => $composableBuilder(
     column: $table.trusted,
     builder: (column) => ColumnOrderings(column),
@@ -2842,6 +3161,16 @@ class $$DevicesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get avatarSeed => $composableBuilder(
+    column: $table.avatarSeed,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get avatarColor => $composableBuilder(
+    column: $table.avatarColor,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get trusted =>
       $composableBuilder(column: $table.trusted, builder: (column) => column);
 
@@ -2888,6 +3217,8 @@ class $$DevicesTableTableManager
                 Value<String> signingPublicKey = const Value.absent(),
                 Value<String> exchangePublicKey = const Value.absent(),
                 Value<String> fingerprint = const Value.absent(),
+                Value<String> avatarSeed = const Value.absent(),
+                Value<String> avatarColor = const Value.absent(),
                 Value<bool> trusted = const Value.absent(),
                 Value<DateTime?> lastSeen = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -2901,6 +3232,8 @@ class $$DevicesTableTableManager
                 signingPublicKey: signingPublicKey,
                 exchangePublicKey: exchangePublicKey,
                 fingerprint: fingerprint,
+                avatarSeed: avatarSeed,
+                avatarColor: avatarColor,
                 trusted: trusted,
                 lastSeen: lastSeen,
                 createdAt: createdAt,
@@ -2916,6 +3249,8 @@ class $$DevicesTableTableManager
                 required String signingPublicKey,
                 required String exchangePublicKey,
                 required String fingerprint,
+                Value<String> avatarSeed = const Value.absent(),
+                Value<String> avatarColor = const Value.absent(),
                 Value<bool> trusted = const Value.absent(),
                 Value<DateTime?> lastSeen = const Value.absent(),
                 required DateTime createdAt,
@@ -2929,6 +3264,8 @@ class $$DevicesTableTableManager
                 signingPublicKey: signingPublicKey,
                 exchangePublicKey: exchangePublicKey,
                 fingerprint: fingerprint,
+                avatarSeed: avatarSeed,
+                avatarColor: avatarColor,
                 trusted: trusted,
                 lastSeen: lastSeen,
                 createdAt: createdAt,
@@ -3150,6 +3487,7 @@ typedef $$ChatMessagesTableCreateCompanionBuilder =
       Value<String?> fileName,
       Value<String?> filePath,
       Value<int?> fileSize,
+      Value<String?> mimeType,
       required String status,
       Value<String?> transferId,
       required DateTime createdAt,
@@ -3166,6 +3504,7 @@ typedef $$ChatMessagesTableUpdateCompanionBuilder =
       Value<String?> fileName,
       Value<String?> filePath,
       Value<int?> fileSize,
+      Value<String?> mimeType,
       Value<String> status,
       Value<String?> transferId,
       Value<DateTime> createdAt,
@@ -3223,6 +3562,11 @@ class $$ChatMessagesTableFilterComposer
 
   ColumnFilters<int> get fileSize => $composableBuilder(
     column: $table.fileSize,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3296,6 +3640,11 @@ class $$ChatMessagesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get status => $composableBuilder(
     column: $table.status,
     builder: (column) => ColumnOrderings(column),
@@ -3352,6 +3701,9 @@ class $$ChatMessagesTableAnnotationComposer
   GeneratedColumn<int> get fileSize =>
       $composableBuilder(column: $table.fileSize, builder: (column) => column);
 
+  GeneratedColumn<String> get mimeType =>
+      $composableBuilder(column: $table.mimeType, builder: (column) => column);
+
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
 
@@ -3404,6 +3756,7 @@ class $$ChatMessagesTableTableManager
                 Value<String?> fileName = const Value.absent(),
                 Value<String?> filePath = const Value.absent(),
                 Value<int?> fileSize = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<String?> transferId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -3418,6 +3771,7 @@ class $$ChatMessagesTableTableManager
                 fileName: fileName,
                 filePath: filePath,
                 fileSize: fileSize,
+                mimeType: mimeType,
                 status: status,
                 transferId: transferId,
                 createdAt: createdAt,
@@ -3434,6 +3788,7 @@ class $$ChatMessagesTableTableManager
                 Value<String?> fileName = const Value.absent(),
                 Value<String?> filePath = const Value.absent(),
                 Value<int?> fileSize = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
                 required String status,
                 Value<String?> transferId = const Value.absent(),
                 required DateTime createdAt,
@@ -3448,6 +3803,7 @@ class $$ChatMessagesTableTableManager
                 fileName: fileName,
                 filePath: filePath,
                 fileSize: fileSize,
+                mimeType: mimeType,
                 status: status,
                 transferId: transferId,
                 createdAt: createdAt,
@@ -3487,6 +3843,9 @@ typedef $$TransfersTableCreateCompanionBuilder =
       Value<String?> filePath,
       required int fileSize,
       Value<String?> sha256,
+      Value<String?> mimeType,
+      Value<String?> savedPath,
+      Value<String?> savedUri,
       required String status,
       Value<int> receivedBytes,
       Value<int> totalChunks,
@@ -3503,6 +3862,9 @@ typedef $$TransfersTableUpdateCompanionBuilder =
       Value<String?> filePath,
       Value<int> fileSize,
       Value<String?> sha256,
+      Value<String?> mimeType,
+      Value<String?> savedPath,
+      Value<String?> savedUri,
       Value<String> status,
       Value<int> receivedBytes,
       Value<int> totalChunks,
@@ -3552,6 +3914,21 @@ class $$TransfersTableFilterComposer
 
   ColumnFilters<String> get sha256 => $composableBuilder(
     column: $table.sha256,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get savedPath => $composableBuilder(
+    column: $table.savedPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get savedUri => $composableBuilder(
+    column: $table.savedUri,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3625,6 +4002,21 @@ class $$TransfersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get savedPath => $composableBuilder(
+    column: $table.savedPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get savedUri => $composableBuilder(
+    column: $table.savedUri,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get status => $composableBuilder(
     column: $table.status,
     builder: (column) => ColumnOrderings(column),
@@ -3683,6 +4075,15 @@ class $$TransfersTableAnnotationComposer
   GeneratedColumn<String> get sha256 =>
       $composableBuilder(column: $table.sha256, builder: (column) => column);
 
+  GeneratedColumn<String> get mimeType =>
+      $composableBuilder(column: $table.mimeType, builder: (column) => column);
+
+  GeneratedColumn<String> get savedPath =>
+      $composableBuilder(column: $table.savedPath, builder: (column) => column);
+
+  GeneratedColumn<String> get savedUri =>
+      $composableBuilder(column: $table.savedUri, builder: (column) => column);
+
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
 
@@ -3738,6 +4139,9 @@ class $$TransfersTableTableManager
                 Value<String?> filePath = const Value.absent(),
                 Value<int> fileSize = const Value.absent(),
                 Value<String?> sha256 = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
+                Value<String?> savedPath = const Value.absent(),
+                Value<String?> savedUri = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
@@ -3752,6 +4156,9 @@ class $$TransfersTableTableManager
                 filePath: filePath,
                 fileSize: fileSize,
                 sha256: sha256,
+                mimeType: mimeType,
+                savedPath: savedPath,
+                savedUri: savedUri,
                 status: status,
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,
@@ -3768,6 +4175,9 @@ class $$TransfersTableTableManager
                 Value<String?> filePath = const Value.absent(),
                 required int fileSize,
                 Value<String?> sha256 = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
+                Value<String?> savedPath = const Value.absent(),
+                Value<String?> savedUri = const Value.absent(),
                 required String status,
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
@@ -3782,6 +4192,9 @@ class $$TransfersTableTableManager
                 filePath: filePath,
                 fileSize: fileSize,
                 sha256: sha256,
+                mimeType: mimeType,
+                savedPath: savedPath,
+                savedUri: savedUri,
                 status: status,
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,

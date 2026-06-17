@@ -69,7 +69,7 @@ DWORD DibColorTableSize(const BITMAPINFOHEADER* header) {
     return header->biClrUsed * sizeof(RGBQUAD);
   }
   if (header->biBitCount <= 8) {
-    return (1u << header->biBitCount) * sizeof(RGBQUAD);
+    return (1ull << header->biBitCount) * sizeof(RGBQUAD);
   }
   return 0;
 }

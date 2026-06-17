@@ -1,8 +1,145 @@
 #include "flutter_window.h"
 
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+#include <shellapi.h>
+#include <windows.h>
+
+#include <chrono>
+#include <fstream>
 #include <optional>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) {
+    return "";
+  }
+  int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                                 static_cast<int>(value.length()), nullptr, 0,
+                                 nullptr, nullptr);
+  std::string result(size, 0);
+  WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                      static_cast<int>(value.length()), result.data(), size,
+                      nullptr, nullptr);
+  return result;
+}
+
+std::wstring ClipboardTempDirectory() {
+  wchar_t temp_path[MAX_PATH];
+  DWORD length = GetTempPathW(MAX_PATH, temp_path);
+  std::wstring directory(temp_path, length);
+  directory += L"LocalChatClipboard";
+  CreateDirectoryW(directory.c_str(), nullptr);
+  return directory;
+}
+
+std::wstring UniqueClipboardImagePath() {
+  auto now = std::chrono::system_clock::now().time_since_epoch().count();
+  std::wstringstream stream;
+  stream << ClipboardTempDirectory() << L"\\clipboard-" << now << L".bmp";
+  return stream.str();
+}
+
+std::vector<std::string> ReadClipboardFilePaths() {
+  std::vector<std::string> paths;
+  HANDLE handle = GetClipboardData(CF_HDROP);
+  if (handle == nullptr) {
+    return paths;
+  }
+  HDROP drop = static_cast<HDROP>(handle);
+  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  for (UINT index = 0; index < count; ++index) {
+    UINT length = DragQueryFileW(drop, index, nullptr, 0);
+    std::wstring path(length + 1, L'\0');
+    DragQueryFileW(drop, index, path.data(), length + 1);
+    path.resize(length);
+    paths.push_back(WideToUtf8(path));
+  }
+  return paths;
+}
+
+DWORD DibColorTableSize(const BITMAPINFOHEADER* header) {
+  if (header->biClrUsed > 0) {
+    return header->biClrUsed * sizeof(RGBQUAD);
+  }
+  if (header->biBitCount <= 8) {
+    return (1u << header->biBitCount) * sizeof(RGBQUAD);
+  }
+  return 0;
+}
+
+DWORD DibMaskSize(const BITMAPINFOHEADER* header) {
+  if (header->biSize == sizeof(BITMAPINFOHEADER) &&
+      header->biCompression == BI_BITFIELDS) {
+    return 3 * sizeof(DWORD);
+  }
+  return 0;
+}
+
+std::optional<std::string> SaveClipboardDibImage() {
+  HANDLE handle = GetClipboardData(CF_DIB);
+  if (handle == nullptr) {
+    return std::nullopt;
+  }
+  void* dib = GlobalLock(handle);
+  if (dib == nullptr) {
+    return std::nullopt;
+  }
+  SIZE_T dib_size = GlobalSize(handle);
+  if (dib_size < sizeof(BITMAPINFOHEADER)) {
+    GlobalUnlock(handle);
+    return std::nullopt;
+  }
+
+  auto* header = static_cast<BITMAPINFOHEADER*>(dib);
+  DWORD pixel_offset = sizeof(BITMAPFILEHEADER) + header->biSize +
+                       DibMaskSize(header) + DibColorTableSize(header);
+  BITMAPFILEHEADER file_header = {};
+  file_header.bfType = 0x4D42;
+  file_header.bfSize =
+      static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + dib_size);
+  file_header.bfOffBits = pixel_offset;
+
+  std::wstring path = UniqueClipboardImagePath();
+  std::ofstream output(path, std::ios::binary);
+  if (!output) {
+    GlobalUnlock(handle);
+    return std::nullopt;
+  }
+  output.write(reinterpret_cast<const char*>(&file_header),
+               sizeof(file_header));
+  output.write(static_cast<const char*>(dib), dib_size);
+  output.close();
+  GlobalUnlock(handle);
+  return WideToUtf8(path);
+}
+
+flutter::EncodableValue GetClipboardFiles(HWND hwnd) {
+  flutter::EncodableList list;
+  if (!OpenClipboard(hwnd)) {
+    return flutter::EncodableValue(list);
+  }
+  std::vector<std::string> paths = ReadClipboardFilePaths();
+  if (paths.empty()) {
+    std::optional<std::string> image_path = SaveClipboardDibImage();
+    if (image_path.has_value()) {
+      paths.push_back(image_path.value());
+    }
+  }
+  CloseClipboard();
+  for (const auto& path : paths) {
+    list.emplace_back(path);
+  }
+  return flutter::EncodableValue(list);
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +162,21 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  auto clipboard_channel =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "localchat/clipboard",
+          &flutter::StandardMethodCodec::GetInstance());
+  clipboard_channel->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "getFiles") {
+          result->Success(GetClipboardFiles(GetHandle()));
+          return;
+        }
+        result->NotImplemented();
+      });
+  clipboard_channel_ = std::move(clipboard_channel);
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app/app_controller.dart';
 import 'core/device_profile.dart';
@@ -743,39 +744,55 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = peer.trusted && !controller.busy;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: '选择文件',
-            onPressed: enabled ? controller.pickAndSendFiles : null,
-            icon: const Icon(Icons.attach_file),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
+          if (enabled) {
+            _pasteFromClipboard();
+          }
+        },
+      },
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            top: BorderSide(color: Theme.of(context).dividerColor),
           ),
-          Expanded(
-            child: TextField(
-              controller: textController,
-              enabled: enabled,
-              minLines: 1,
-              maxLines: 4,
-              decoration: InputDecoration(
-                hintText: peer.trusted ? '输入消息，或粘贴链接...' : '先配对后发送',
-                border: const OutlineInputBorder(),
-                isDense: true,
-              ),
-              onSubmitted: (_) => _send(),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: '选择文件',
+              onPressed: enabled ? controller.pickAndSendFiles : null,
+              icon: const Icon(Icons.attach_file),
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: enabled ? _send : null,
-            child: const Icon(Icons.send),
-          ),
-        ],
+            IconButton(
+              tooltip: '粘贴文件或图片',
+              onPressed: enabled ? _pasteFromClipboard : null,
+              icon: const Icon(Icons.content_paste),
+            ),
+            Expanded(
+              child: TextField(
+                controller: textController,
+                enabled: enabled,
+                minLines: 1,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  hintText: peer.trusted ? '输入消息，或粘贴文件/图片...' : '先配对后发送',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onSubmitted: (_) => _send(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: enabled ? _send : null,
+              child: const Icon(Icons.send),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -784,6 +801,24 @@ class _Composer extends StatelessWidget {
     final text = textController.text;
     textController.clear();
     controller.sendText(text);
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final sentFiles = await controller.pasteAndSendClipboardFiles();
+    if (sentFiles) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    final value = textController.value;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    final newText = value.text.replaceRange(start, end, text);
+    final offset = start + text.length;
+    textController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: offset),
+    );
   }
 }
 

@@ -1,14 +1,20 @@
 package com.localchat.localchat
 
 import android.content.ContentValues
+import android.content.Context
+import android.content.ClipboardManager
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.OpenableColumns
 import android.provider.MediaStore
+import android.webkit.MimeTypeMap
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -28,6 +34,18 @@ class MainActivity : FlutterActivity() {
                     result.success(saved)
                 } catch (error: Throwable) {
                     result.error("save_failed", error.message, null)
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "localchat/clipboard")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "getFiles") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                try {
+                    result.success(readClipboardFiles())
+                } catch (error: Throwable) {
+                    result.error("clipboard_failed", error.message, null)
                 }
             }
     }
@@ -84,5 +102,53 @@ class MainActivity : FlutterActivity() {
             index++
         }
         return candidate
+    }
+
+    private fun readClipboardFiles(): List<String> {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = clipboard.primaryClip ?: return emptyList()
+        val files = mutableListOf<String>()
+        for (index in 0 until clip.itemCount) {
+            val uri = clip.getItemAt(index).uri ?: continue
+            files.add(copyClipboardUri(uri))
+        }
+        return files
+    }
+
+    private fun copyClipboardUri(uri: Uri): String {
+        val resolver = applicationContext.contentResolver
+        val mimeType = resolver.getType(uri)
+        val fileName = clipboardFileName(uri, mimeType)
+        val dir = File(cacheDir, "clipboard")
+        dir.mkdirs()
+        val target = uniqueFile(dir, fileName)
+        resolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(target).use { output -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Unable to open clipboard item")
+        return target.absolutePath
+    }
+
+    private fun clipboardFileName(uri: Uri, mimeType: String?): String {
+        val displayName = queryDisplayName(uri)
+        if (!displayName.isNullOrBlank()) {
+            return displayName.replace(Regex("""[\\/:*?"<>|]"""), "_")
+        }
+        val extension = if (mimeType == null) {
+            "bin"
+        } else {
+            MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "bin"
+        }
+        return "clipboard-${System.currentTimeMillis()}.$extension"
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        val resolver = applicationContext.contentResolver
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) return cursor.getString(index)
+            }
+        }
+        return null
     }
 }

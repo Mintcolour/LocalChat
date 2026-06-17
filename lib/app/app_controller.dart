@@ -10,6 +10,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
+import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
 import '../services/identity_service.dart';
@@ -21,7 +22,10 @@ const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
 class AppController extends ChangeNotifier {
-  AppController() : db = AppDatabase(), fileStore = FileStore() {
+  AppController()
+    : db = AppDatabase(),
+      fileStore = FileStore(),
+      clipboardImportService = ClipboardImportService() {
     identityService = IdentityService(db);
     securityService = SecurityService(identityService);
     transportService = TransportService(
@@ -35,6 +39,7 @@ class AppController extends ChangeNotifier {
 
   final AppDatabase db;
   final FileStore fileStore;
+  final ClipboardImportService clipboardImportService;
   late final IdentityService identityService;
   late final SecurityService securityService;
   late final TransportService transportService;
@@ -312,6 +317,15 @@ class AppController extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  Future<bool> pasteAndSendClipboardFiles() async {
+    final paths = await clipboardImportService.readFilePaths();
+    if (paths.isEmpty) return false;
+    status = '从剪贴板读取到 ${paths.length} 个文件，正在发送...';
+    notifyListeners();
+    await sendFiles(paths);
+    return true;
   }
 
   Future<void> openPath(String? path) async {

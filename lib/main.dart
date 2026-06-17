@@ -90,15 +90,15 @@ class _LocalChatHomeState extends State<LocalChatHome> {
         }
         return Scaffold(
           appBar: AppBar(
-            title: const Text('LocalChat'),
+            title: Text(controller.text.appTitle),
             actions: [
               IconButton(
-                tooltip: '重新搜索',
+                tooltip: controller.text.rescan,
                 onPressed: controller.rescan,
                 icon: const Icon(Icons.travel_explore),
               ),
               IconButton(
-                tooltip: '设置',
+                tooltip: controller.text.settings,
                 onPressed: () => _showSettingsDialog(context, controller),
                 icon: const Icon(Icons.settings_outlined),
               ),
@@ -163,22 +163,27 @@ class _DevicePane extends StatelessWidget {
         children: [
           _LocalIdentityCard(controller: controller),
           const SizedBox(height: 16),
-          _SectionTitle(title: '已信任设备', count: trusted.length),
-          if (trusted.isEmpty)
-            const _EmptyHint('还没有已信任设备。让手机/电脑打开 LocalChat 并处在同一 Wi-Fi。'),
+          _SectionTitle(
+            title: controller.text.trustedDevices,
+            count: trusted.length,
+          ),
+          if (trusted.isEmpty) _EmptyHint(controller.text.noTrustedDevices),
           for (final device in trusted)
             _DeviceTile(controller: controller, device: device),
           const SizedBox(height: 16),
-          _SectionTitle(title: '发现的设备', count: discovered.length),
+          _SectionTitle(
+            title: controller.text.discoveredDevices,
+            count: discovered.length,
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
               onPressed: controller.rescan,
               icon: const Icon(Icons.travel_explore),
-              label: const Text('重新搜索'),
+              label: Text(controller.text.rescan),
             ),
           ),
-          if (discovered.isEmpty) const _EmptyHint('正在监听局域网广播...'),
+          if (discovered.isEmpty) _EmptyHint(controller.text.listeningLan),
           for (final device in discovered)
             _DeviceTile(controller: controller, device: device),
         ],
@@ -227,7 +232,7 @@ class _LocalIdentityCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             identity == null
-                ? '身份初始化中'
+                ? controller.text.identityStarting
                 : '${identity.platform} · ${shortFingerprint(identity.fingerprint)}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
@@ -246,6 +251,13 @@ class _DeviceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selected = controller.selectedDevice?.id == device.id;
+    final endpoint =
+        device.host == null ||
+            device.host!.isEmpty ||
+            device.port == null ||
+            device.port! <= 0
+        ? controller.text.notConnected
+        : displayHost(device.host, device.port);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: ListTile(
@@ -264,7 +276,7 @@ class _DeviceTile extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          '${peerStatusLabel(device)} · ${device.platform} · ${displayHost(device.host, device.port)}',
+          '${controller.text.peerStatus(device)} · ${device.platform} · $endpoint',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -274,7 +286,7 @@ class _DeviceTile extends StatelessWidget {
                 onPressed: controller.busy
                     ? null
                     : () => controller.pair(device),
-                child: const Text('配对'),
+                child: Text(controller.text.pair),
               ),
         onTap: () => controller.selectDevice(device),
       ),
@@ -348,7 +360,7 @@ class _ChatPane extends StatelessWidget {
   Widget build(BuildContext context) {
     final peer = controller.selectedDevice;
     if (peer == null) {
-      return const Center(child: Text('选择一个设备开始聊天式传输'));
+      return Center(child: Text(controller.text.selectDevice));
     }
     final online = isPeerOnline(peer);
     return DropTarget(
@@ -367,12 +379,17 @@ class _ChatPane extends StatelessWidget {
         children: [
           if (showHeader)
             _DesktopPeerHeader(controller: controller, peer: peer),
-          if (peer.trusted && !online) _ConnectionBanner(peer: peer),
-          if (dragging) const _DropBanner(),
+          if (peer.trusted && !online)
+            _ConnectionBanner(controller: controller, peer: peer),
+          if (dragging) _DropBanner(controller: controller),
           Expanded(
             child: controller.messages.isEmpty
                 ? Center(
-                    child: Text(peer.trusted ? '发一句话，或把文件拖进来。' : '先完成首次配对。'),
+                    child: Text(
+                      peer.trusted
+                          ? controller.text.sayOrDropFile
+                          : controller.text.pairFirst,
+                    ),
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.all(16),
@@ -432,7 +449,7 @@ class _DesktopPeerHeader extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Text(
-                  '${peerStatusLabel(peer)} · ${shortFingerprint(peer.fingerprint)}',
+                  '${controller.text.peerStatus(peer)} · ${shortFingerprint(peer.fingerprint)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -440,13 +457,13 @@ class _DesktopPeerHeader extends StatelessWidget {
           ),
           if (peer.trusted)
             IconButton(
-              tooltip: '重命名会话',
+              tooltip: controller.text.renameConversation,
               onPressed: () => _showRenameDialog(context, controller, peer),
               icon: const Icon(Icons.edit_outlined),
             ),
           if (peer.trusted)
             IconButton(
-              tooltip: '删除会话',
+              tooltip: controller.text.deleteConversation,
               onPressed: () => _confirmDeleteConversation(context, controller),
               icon: const Icon(Icons.delete_outline),
             ),
@@ -454,7 +471,7 @@ class _DesktopPeerHeader extends StatelessWidget {
             FilledButton.icon(
               onPressed: controller.busy ? null : () => controller.pair(peer),
               icon: const Icon(Icons.handshake),
-              label: const Text('首次配对'),
+              label: Text(controller.text.firstPair),
             ),
         ],
       ),
@@ -479,18 +496,18 @@ class _MobilePeerHeader extends StatelessWidget {
         onPressed: controller.closeConversation,
       ),
       title: Text(controller.titleFor(peer)),
-      subtitle: Text(peerStatusLabel(peer)),
+      subtitle: Text(controller.text.peerStatus(peer)),
       trailing: peer.trusted
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
-                  tooltip: '重命名会话',
+                  tooltip: controller.text.renameConversation,
                   onPressed: () => _showRenameDialog(context, controller, peer),
                   icon: const Icon(Icons.edit_outlined),
                 ),
                 IconButton(
-                  tooltip: '删除会话',
+                  tooltip: controller.text.deleteConversation,
                   onPressed: () =>
                       _confirmDeleteConversation(context, controller),
                   icon: const Icon(Icons.delete_outline),
@@ -511,22 +528,24 @@ Future<void> _showRenameDialog(
   final value = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('重命名会话'),
+      title: Text(controller.text.renameConversation),
       content: TextFormField(
         initialValue: input,
         autofocus: true,
-        decoration: const InputDecoration(labelText: '会话名称'),
+        decoration: InputDecoration(
+          labelText: controller.text.conversationName,
+        ),
         onChanged: (value) => input = value,
         onFieldSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(controller.text.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(input),
-          child: const Text('保存'),
+          child: Text(controller.text.save),
         ),
       ],
     ),
@@ -546,16 +565,16 @@ Future<void> _confirmDeleteConversation(
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('删除会话？'),
-      content: Text('将删除“$title”的聊天记录、传输索引、连接信息和信任关系，磁盘上的文件不会被删除。'),
+      title: Text(controller.text.deleteConversationTitle),
+      content: Text(controller.text.deleteConversationBody(title)),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: Text(controller.text.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('删除'),
+          child: Text(controller.text.delete),
         ),
       ],
     ),
@@ -574,7 +593,7 @@ Future<void> _showSettingsDialog(
     builder: (context) => AnimatedBuilder(
       animation: controller,
       builder: (context, _) => AlertDialog(
-        title: const Text('设置'),
+        title: Text(controller.text.settings),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -582,38 +601,58 @@ Future<void> _showSettingsDialog(
             children: [
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('本机昵称'),
+                title: Text(controller.text.localNickname),
                 subtitle: Text(controller.identity?.displayName ?? 'LocalChat'),
                 trailing: IconButton(
-                  tooltip: '修改本机昵称',
+                  tooltip: controller.text.editLocalNickname,
                   onPressed: () => _showLocalRenameDialog(context, controller),
                   icon: const Icon(Icons.edit_outlined),
                 ),
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('自动复制收到的文字'),
-                subtitle: const Text('收到文字或链接时自动复制到系统剪贴板'),
+                title: Text(controller.text.autoCopyReceivedText),
+                subtitle: Text(controller.text.autoCopyReceivedTextSubtitle),
                 value: controller.autoCopyReceivedText,
                 onChanged: controller.setAutoCopyReceivedText,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(controller.text.language),
+                trailing: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment(
+                      value: 'zh',
+                      label: Text(controller.text.chinese),
+                    ),
+                    ButtonSegment(
+                      value: 'en',
+                      label: Text(controller.text.english),
+                    ),
+                  ],
+                  selected: {controller.languageCode},
+                  onSelectionChanged: (values) {
+                    controller.setLanguageCode(values.single);
+                  },
+                ),
               ),
               const Divider(),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('清空聊天记录'),
-                subtitle: const Text('删除所有会话和消息，不删除磁盘文件'),
+                title: Text(controller.text.clearHistory),
+                subtitle: Text(controller.text.clearHistorySubtitle),
                 trailing: TextButton(
                   onPressed: controller.clearHistory,
-                  child: const Text('清空'),
+                  child: Text(controller.text.clear),
                 ),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('清空接收文件索引'),
-                subtitle: const Text('只清理记录，不删除磁盘文件'),
+                title: Text(controller.text.clearTransfers),
+                subtitle: Text(controller.text.clearTransfersSubtitle),
                 trailing: TextButton(
                   onPressed: controller.clearTransferIndex,
-                  child: const Text('清空'),
+                  child: Text(controller.text.clear),
                 ),
               ),
             ],
@@ -622,7 +661,7 @@ Future<void> _showSettingsDialog(
         actions: [
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('完成'),
+            child: Text(controller.text.done),
           ),
         ],
       ),
@@ -638,22 +677,24 @@ Future<void> _showLocalRenameDialog(
   final value = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('修改本机昵称'),
+      title: Text(controller.text.editLocalNickname),
       content: TextFormField(
         initialValue: input,
         autofocus: true,
-        decoration: const InputDecoration(labelText: '别人看到的设备名称'),
+        decoration: InputDecoration(
+          labelText: controller.text.deviceNameVisible,
+        ),
         onChanged: (value) => input = value,
         onFieldSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(controller.text.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(input),
-          child: const Text('保存'),
+          child: Text(controller.text.save),
         ),
       ],
     ),
@@ -668,11 +709,14 @@ Future<void> _showPairRequestDialog(
   AppController controller,
   PendingPairRequest request,
 ) async {
+  final endpoint = request.host.isEmpty || request.port <= 0
+      ? controller.text.notConnected
+      : displayHost(request.host, request.port);
   final allowed = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
-      title: const Text('允许设备配对？'),
+      title: Text(controller.text.allowPairTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -694,9 +738,7 @@ Future<void> _showPairRequestDialog(
                       request.displayName,
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    Text(
-                      '${request.platform} · ${displayHost(request.host, request.port)}',
-                    ),
+                    Text('${request.platform} · $endpoint'),
                   ],
                 ),
               ),
@@ -704,21 +746,23 @@ Future<void> _showPairRequestDialog(
           ),
           const SizedBox(height: 16),
           Text(
-            '校验码：${request.code}',
+            '${controller.text.verificationCode}: ${request.code}',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          Text('指纹：${shortFingerprint(request.fingerprint)}'),
+          Text(
+            '${controller.text.fingerprint}: ${shortFingerprint(request.fingerprint)}',
+          ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('拒绝'),
+          child: Text(controller.text.reject),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('允许'),
+          child: Text(controller.text.allow),
         ),
       ],
     ),
@@ -763,12 +807,12 @@ class _Composer extends StatelessWidget {
         child: Row(
           children: [
             IconButton(
-              tooltip: '选择文件',
+              tooltip: controller.text.chooseFile,
               onPressed: enabled ? controller.pickAndSendFiles : null,
               icon: const Icon(Icons.attach_file),
             ),
             IconButton(
-              tooltip: '粘贴文件或图片',
+              tooltip: controller.text.pasteFileOrImage,
               onPressed: enabled ? _pasteFromClipboard : null,
               icon: const Icon(Icons.content_paste),
             ),
@@ -779,7 +823,9 @@ class _Composer extends StatelessWidget {
                 minLines: 1,
                 maxLines: 4,
                 decoration: InputDecoration(
-                  hintText: peer.trusted ? '输入消息，或粘贴文件/图片...' : '先配对后发送',
+                  hintText: peer.trusted
+                      ? controller.text.inputHint
+                      : controller.text.pairBeforeSend,
                   border: const OutlineInputBorder(),
                   isDense: true,
                 ),
@@ -838,8 +884,8 @@ class _MessageBubble extends StatelessWidget {
     final peer = outgoing ? null : controller.selectedDevice;
     final identity = controller.identity;
     final title = outgoing
-        ? identity?.displayName ?? '我'
-        : (peer == null ? '对方' : controller.titleFor(peer));
+        ? identity?.displayName ?? controller.text.me
+        : (peer == null ? controller.text.peer : controller.titleFor(peer));
     final avatar = outgoing
         ? (identity == null
               ? null
@@ -883,7 +929,7 @@ class _MessageBubble extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         Text(
-          '${messageStatusLabel(message.status)} ${formatMessageTimestamp(message.createdAt)}',
+          '${controller.text.messageStatus(message.status)} ${formatMessageTimestamp(message.createdAt)}',
           style: Theme.of(context).textTheme.labelSmall,
         ),
       ],
@@ -963,7 +1009,7 @@ class _FileMessage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    message.fileName ?? '文件',
+                    message.fileName ?? controller.text.file,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -974,28 +1020,28 @@ class _FileMessage extends StatelessWidget {
                     ),
                   if (saved)
                     Text(
-                      '已保存到本地',
+                      controller.text.savedLocal,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                 ],
               ),
             ),
             IconButton(
-              tooltip: '打开',
+              tooltip: controller.text.open,
               onPressed: openTarget == null
                   ? null
                   : () => controller.openPath(openTarget),
               icon: const Icon(Icons.open_in_new),
             ),
             IconButton(
-              tooltip: '打开文件夹',
+              tooltip: controller.text.openFolder,
               onPressed: message.filePath == null
                   ? null
                   : () => controller.openFolder(message.filePath),
               icon: const Icon(Icons.folder_open),
             ),
             IconButton(
-              tooltip: '保存到本地',
+              tooltip: controller.text.saveLocal,
               onPressed: saved
                   ? null
                   : () => controller.saveMessageFile(message),
@@ -1077,7 +1123,10 @@ class _StatusBar extends StatelessWidget {
               child: Text(
                 controller.lastError == null
                     ? controller.status
-                    : '${controller.status}：${controller.lastError}',
+                    : controller.text.statusWithError(
+                        controller.status,
+                        controller.lastError!,
+                      ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1090,7 +1139,9 @@ class _StatusBar extends StatelessWidget {
 }
 
 class _DropBanner extends StatelessWidget {
-  const _DropBanner();
+  const _DropBanner({required this.controller});
+
+  final AppController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1098,14 +1149,15 @@ class _DropBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       color: Theme.of(context).colorScheme.secondaryContainer,
-      child: const Text('松开鼠标即可发送文件'),
+      child: Text(controller.text.releaseToSend),
     );
   }
 }
 
 class _ConnectionBanner extends StatelessWidget {
-  const _ConnectionBanner({required this.peer});
+  const _ConnectionBanner({required this.controller, required this.peer});
 
+  final AppController controller;
   final Device peer;
 
   @override
@@ -1115,7 +1167,7 @@ class _ConnectionBanner extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       color: Theme.of(context).colorScheme.errorContainer,
       child: Text(
-        '${peer.displayName} 当前离线。发送时会自动等待重新发现并重连。',
+        controller.text.offlineBanner(peer.displayName),
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
       ),
     );

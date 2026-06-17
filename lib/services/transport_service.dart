@@ -54,6 +54,7 @@ class TransportService {
   int _port = 0;
   Future<Device?> Function(String deviceId)? reconnectPeer;
   bool autoCopyReceivedText = true;
+  String languageCode = 'zh';
 
   int get port => _port;
   Stream<void> get updates => _updates.stream;
@@ -679,42 +680,60 @@ class TransportService {
     return output.takeBytes();
   }
 
-  Future<Response> _receiveMessage(Request request) =>
-      _withTrustedEnvelope(request, (peer, payload) async {
-        final conversation = await _db.ensureConversation(peer);
-        final kind = _string(payload['kind'], 'text');
-        final body = _string(payload['body'], '');
-        await _db.addMessage(
-          ChatMessagesCompanion.insert(
-            id: _string(payload['id'], _uuid.v4()),
-            conversationId: conversation.id,
-            peerDeviceId: peer.id,
-            direction: 'in',
-            kind: kind,
-            body: Value(body),
-            status: 'received',
-            createdAt:
-                DateTime.tryParse(_string(payload['created_at'], '')) ??
-                DateTime.now(),
-          ),
-        );
-        if ((kind == 'text' || kind == 'link') &&
-            body.isNotEmpty &&
-            autoCopyReceivedText) {
-          try {
-            await Clipboard.setData(ClipboardData(text: body));
-            _notifications.add('收到 ${peer.displayName} 的文字，已复制到剪贴板');
-          } catch (_) {
-            _notifications.add('收到 ${peer.displayName} 的文字');
-          }
-        } else if ((kind == 'text' || kind == 'link') && body.isNotEmpty) {
-          _notifications.add('收到 ${peer.displayName} 的文字');
-        } else {
-          _notifications.add('收到 ${peer.displayName} 的消息');
+  Future<Response> _receiveMessage(Request request) => _withTrustedEnvelope(
+    request,
+    (peer, payload) async {
+      final conversation = await _db.ensureConversation(peer);
+      final kind = _string(payload['kind'], 'text');
+      final body = _string(payload['body'], '');
+      await _db.addMessage(
+        ChatMessagesCompanion.insert(
+          id: _string(payload['id'], _uuid.v4()),
+          conversationId: conversation.id,
+          peerDeviceId: peer.id,
+          direction: 'in',
+          kind: kind,
+          body: Value(body),
+          status: 'received',
+          createdAt:
+              DateTime.tryParse(_string(payload['created_at'], '')) ??
+              DateTime.now(),
+        ),
+      );
+      if ((kind == 'text' || kind == 'link') &&
+          body.isNotEmpty &&
+          autoCopyReceivedText) {
+        try {
+          await Clipboard.setData(ClipboardData(text: body));
+          _notifications.add(
+            languageCode == 'en'
+                ? 'Received text from ${peer.displayName}, copied to clipboard'
+                : '收到 ${peer.displayName} 的文字，已复制到剪贴板',
+          );
+        } catch (_) {
+          _notifications.add(
+            languageCode == 'en'
+                ? 'Received text from ${peer.displayName}'
+                : '收到 ${peer.displayName} 的文字',
+          );
         }
-        _updates.add(null);
-        return _json({'ok': true});
-      });
+      } else if ((kind == 'text' || kind == 'link') && body.isNotEmpty) {
+        _notifications.add(
+          languageCode == 'en'
+              ? 'Received text from ${peer.displayName}'
+              : '收到 ${peer.displayName} 的文字',
+        );
+      } else {
+        _notifications.add(
+          languageCode == 'en'
+              ? 'Received a message from ${peer.displayName}'
+              : '收到 ${peer.displayName} 的消息',
+        );
+      }
+      _updates.add(null);
+      return _json({'ok': true});
+    },
+  );
 
   Future<Response> _receiveTransferStart(Request request) =>
       _withTrustedEnvelope(request, (peer, payload) async {
@@ -764,7 +783,11 @@ class TransportService {
             createdAt: DateTime.now(),
           ),
         );
-        _notifications.add('收到 ${peer.displayName} 的文件：$fileName');
+        _notifications.add(
+          languageCode == 'en'
+              ? 'Received file from ${peer.displayName}: $fileName'
+              : '收到 ${peer.displayName} 的文件：$fileName',
+        );
         _updates.add(null);
         return _json({'ok': true, 'path': file.path});
       });

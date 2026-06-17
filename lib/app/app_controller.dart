@@ -7,6 +7,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
+import '../core/app_text.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
@@ -18,6 +19,7 @@ import '../services/security_service.dart';
 import '../services/transport_service.dart';
 
 const _autoCopyReceivedTextKey = 'auto_copy_received_text';
+const _languageCodeKey = 'language_code';
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
@@ -56,6 +58,7 @@ class AppController extends ChangeNotifier {
   bool initialized = false;
   bool busy = false;
   bool autoCopyReceivedText = true;
+  String languageCode = 'zh';
   String status = '正在启动 LocalChat...';
   String? lastError;
   String? notificationText;
@@ -74,14 +77,18 @@ class AppController extends ChangeNotifier {
   bool _refreshInFlight = false;
   bool _refreshQueued = false;
 
+  AppText get text => AppText(languageCode);
+
   Future<void> initialize() async {
     busy = true;
     notifyListeners();
     try {
       identity = await identityService.load();
+      languageCode = await db.getSetting(_languageCodeKey) ?? 'zh';
       autoCopyReceivedText =
           await db.getSetting(_autoCopyReceivedTextKey) != 'false';
       transportService.autoCopyReceivedText = autoCopyReceivedText;
+      transportService.languageCode = languageCode;
       transportService.reconnectPeer = _waitForReconnectedPeer;
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
@@ -97,7 +104,9 @@ class AppController extends ChangeNotifier {
       _discoverySub = discoveryService.peers.listen((_) => _scheduleRefresh());
       _pairRequestSub = transportService.pairRequests.listen((request) {
         pendingPairRequest = request;
-        status = '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
+        status = languageCode == 'en'
+            ? '${request.displayName} requests pairing. Confirm code ${request.code}.'
+            : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
         notifyListeners();
       });
       _presenceTimer = Timer.periodic(
@@ -106,11 +115,13 @@ class AppController extends ChangeNotifier {
       );
       await _loadSharingIntents();
       await refresh();
-      status = '正在局域网内发现设备，本机端口 $port';
+      status = languageCode == 'en'
+          ? 'Discovering LAN devices, local port $port'
+          : '正在局域网内发现设备，本机端口 $port';
       initialized = true;
     } catch (error) {
       lastError = '$error';
-      status = '启动失败';
+      status = languageCode == 'en' ? 'Startup failed' : '启动失败';
     } finally {
       busy = false;
       notifyListeners();
@@ -184,7 +195,9 @@ class AppController extends ChangeNotifier {
     final trimmed = title.trim();
     if (conversation == null || trimmed.isEmpty) return;
     await db.renameConversation(conversation.id, trimmed);
-    status = '会话已重命名为 $trimmed';
+    status = languageCode == 'en'
+        ? 'Chat renamed to $trimmed'
+        : '会话已重命名为 $trimmed';
     await refresh();
   }
 
@@ -197,20 +210,37 @@ class AppController extends ChangeNotifier {
     selectedDevice = null;
     messages = [];
     transfersById = {};
-    status = '已删除会话 $title';
+    status = languageCode == 'en' ? 'Deleted chat $title' : '已删除会话 $title';
     await refresh();
+  }
+
+  Future<void> setLanguageCode(String value) async {
+    if (value != 'zh' && value != 'en') return;
+    languageCode = value;
+    transportService.languageCode = value;
+    await db.setSetting(_languageCodeKey, value);
+    status = value == 'en' ? 'Language set to English' : '语言已切换为中文';
+    notifyListeners();
   }
 
   Future<void> setAutoCopyReceivedText(bool value) async {
     autoCopyReceivedText = value;
     transportService.autoCopyReceivedText = value;
     await db.setSetting(_autoCopyReceivedTextKey, value ? 'true' : 'false');
-    status = value ? '已开启自动复制收到的文字' : '已关闭自动复制收到的文字';
+    status = value
+        ? (languageCode == 'en'
+              ? 'Auto-copy received text enabled'
+              : '已开启自动复制收到的文字')
+        : (languageCode == 'en'
+              ? 'Auto-copy received text disabled'
+              : '已关闭自动复制收到的文字');
     notifyListeners();
   }
 
   Future<void> rescan() async {
-    status = '正在重新搜索局域网设备...';
+    status = languageCode == 'en'
+        ? 'Rescanning LAN devices...'
+        : '正在重新搜索局域网设备...';
     notifyListeners();
     await discoveryService.announce();
     await _refreshPeerPresence();
@@ -218,13 +248,15 @@ class AppController extends ChangeNotifier {
       DateTime.now().subtract(_staleDiscoveredDeviceAge),
     );
     await refresh();
-    status = '已刷新设备列表';
+    status = languageCode == 'en' ? 'Device list refreshed' : '已刷新设备列表';
     notifyListeners();
   }
 
   Future<void> renameLocalDevice(String title) async {
     identity = await identityService.updateDisplayName(title);
-    status = '本机昵称已改为 ${identity!.displayName}';
+    status = languageCode == 'en'
+        ? 'Local nickname changed to ${identity!.displayName}'
+        : '本机昵称已改为 ${identity!.displayName}';
     await discoveryService.announce();
     notifyListeners();
   }
@@ -234,7 +266,9 @@ class AppController extends ChangeNotifier {
     if (request == null) return;
     transportService.approvePairRequest(request.id);
     pendingPairRequest = null;
-    status = '已允许 ${request.displayName} 配对';
+    status = languageCode == 'en'
+        ? 'Allowed pairing with ${request.displayName}'
+        : '已允许 ${request.displayName} 配对';
     await refresh();
   }
 
@@ -243,22 +277,28 @@ class AppController extends ChangeNotifier {
     if (request == null) return;
     transportService.rejectPairRequest(request.id);
     pendingPairRequest = null;
-    status = '已拒绝 ${request.displayName} 配对';
+    status = languageCode == 'en'
+        ? 'Rejected pairing with ${request.displayName}'
+        : '已拒绝 ${request.displayName} 配对';
     notifyListeners();
   }
 
   Future<void> pair(Device device) async {
     final code = randomCode();
-    status = '正在用配对码 $code 连接 ${device.displayName}';
+    status = languageCode == 'en'
+        ? 'Connecting to ${device.displayName} with code $code'
+        : '正在用配对码 $code 连接 ${device.displayName}';
     busy = true;
     notifyListeners();
     try {
       await transportService.pairWith(device, code);
       await refresh();
-      status = '已信任 ${device.displayName}，之后可以像聊天一样直接发送';
+      status = languageCode == 'en'
+          ? '${device.displayName} is trusted. You can now send directly.'
+          : '已信任 ${device.displayName}，之后可以像聊天一样直接发送';
     } catch (error) {
       lastError = '$error';
-      status = '配对失败';
+      status = languageCode == 'en' ? 'Pairing failed' : '配对失败';
     } finally {
       busy = false;
       notifyListeners();
@@ -273,10 +313,14 @@ class AppController extends ChangeNotifier {
     try {
       await transportService.sendText(peer, text.trim());
       await refresh();
-      status = '${titleFor(peer)} 已发送';
+      status = languageCode == 'en'
+          ? 'Sent to ${titleFor(peer)}'
+          : '${titleFor(peer)} 已发送';
     } catch (error) {
       lastError = '$error';
-      status = '${titleFor(peer)} 连接断开，消息发送失败';
+      status = languageCode == 'en'
+          ? '${titleFor(peer)} disconnected, message failed'
+          : '${titleFor(peer)} 连接断开，消息发送失败';
     } finally {
       busy = false;
       notifyListeners();
@@ -300,7 +344,9 @@ class AppController extends ChangeNotifier {
     final peer = await _currentSelectedPeer();
     if (peer == null || !peer.trusted || paths.isEmpty) {
       pendingSharedFiles = paths;
-      status = '先选择一个已信任设备，再发送 ${paths.length} 个文件';
+      status = languageCode == 'en'
+          ? 'Select a trusted device before sending ${paths.length} files'
+          : '先选择一个已信任设备，再发送 ${paths.length} 个文件';
       notifyListeners();
       return;
     }
@@ -309,10 +355,14 @@ class AppController extends ChangeNotifier {
     try {
       await transportService.sendFiles(peer, paths);
       await refresh();
-      status = '${titleFor(peer)} 文件发送完成';
+      status = languageCode == 'en'
+          ? 'Files sent to ${titleFor(peer)}'
+          : '${titleFor(peer)} 文件发送完成';
     } catch (error) {
       lastError = '$error';
-      status = '${titleFor(peer)} 连接断开，文件发送失败';
+      status = languageCode == 'en'
+          ? '${titleFor(peer)} disconnected, file transfer failed'
+          : '${titleFor(peer)} 连接断开，文件发送失败';
     } finally {
       busy = false;
       notifyListeners();
@@ -322,7 +372,9 @@ class AppController extends ChangeNotifier {
   Future<bool> pasteAndSendClipboardFiles() async {
     final paths = await clipboardImportService.readFilePaths();
     if (paths.isEmpty) return false;
-    status = '从剪贴板读取到 ${paths.length} 个文件，正在发送...';
+    status = languageCode == 'en'
+        ? 'Read ${paths.length} files from clipboard, sending...'
+        : '从剪贴板读取到 ${paths.length} 个文件，正在发送...';
     notifyListeners();
     await sendFiles(paths);
     return true;
@@ -370,11 +422,13 @@ class AppController extends ChangeNotifier {
         savedPath: saved.path,
         savedUri: saved.uri,
       );
-      status = '已保存到 ${saved.path ?? saved.uri ?? 'Downloads/LocalChat'}';
+      status = languageCode == 'en'
+          ? 'Saved to ${saved.path ?? saved.uri ?? 'Downloads/LocalChat'}'
+          : '已保存到 ${saved.path ?? saved.uri ?? 'Downloads/LocalChat'}';
       await refresh();
     } catch (error) {
       lastError = '$error';
-      status = '保存失败';
+      status = languageCode == 'en' ? 'Save failed' : '保存失败';
     } finally {
       busy = false;
       notifyListeners();
@@ -388,13 +442,15 @@ class AppController extends ChangeNotifier {
     selectedDevice = null;
     selectedConversation = null;
     transfersById = {};
-    status = '聊天记录已清空';
+    status = languageCode == 'en' ? 'Chat history cleared' : '聊天记录已清空';
     await refresh();
   }
 
   Future<void> clearTransferIndex() async {
     await db.clearTransferIndex();
-    status = '接收文件索引已清空，磁盘上的文件不会被删除';
+    status = languageCode == 'en'
+        ? 'Received file index cleared. Files on disk are kept.'
+        : '接收文件索引已清空，磁盘上的文件不会被删除';
     notifyListeners();
   }
 
@@ -422,8 +478,9 @@ class AppController extends ChangeNotifier {
     }
     pendingSharedFiles = sharedFiles;
     pendingSharedText = sharedText.isEmpty ? null : sharedText.join('\n');
-    status =
-        '收到系统分享：${sharedFiles.length} 个文件${pendingSharedText == null ? '' : ' 和文本'}';
+    status = languageCode == 'en'
+        ? 'Received system share: ${sharedFiles.length} files${pendingSharedText == null ? '' : ' and text'}'
+        : '收到系统分享：${sharedFiles.length} 个文件${pendingSharedText == null ? '' : ' 和文本'}';
     notifyListeners();
     await _flushPendingShareIfPossible();
   }
@@ -478,7 +535,7 @@ class AppController extends ChangeNotifier {
       await refresh();
     } catch (error) {
       lastError = '$error';
-      status = '刷新失败';
+      status = languageCode == 'en' ? 'Refresh failed' : '刷新失败';
       notifyListeners();
     }
   }
@@ -487,8 +544,10 @@ class AppController extends ChangeNotifier {
     final selectedTitle =
         selectedDevice?.id == deviceId && selectedDevice != null
         ? titleFor(selectedDevice!)
-        : '设备';
-    status = '$selectedTitle 连接断开，正在自动重连...';
+        : (languageCode == 'en' ? 'Device' : '设备');
+    status = languageCode == 'en'
+        ? '$selectedTitle disconnected, reconnecting...'
+        : '$selectedTitle 连接断开，正在自动重连...';
     lastError = null;
     notifyListeners();
     await discoveryService.announce();
@@ -497,7 +556,9 @@ class AppController extends ChangeNotifier {
         existing.host != null &&
         existing.port != null &&
         existing.lastSeen != null) {
-      status = '$selectedTitle 已重新连接';
+      status = languageCode == 'en'
+          ? '$selectedTitle reconnected'
+          : '$selectedTitle 已重新连接';
       notifyListeners();
       return existing;
     }
@@ -507,11 +568,14 @@ class AppController extends ChangeNotifier {
           .timeout(const Duration(seconds: 12))
           .first;
       final device = await db.getDevice(peer.deviceId);
-      status = '${device == null ? selectedTitle : titleFor(device)} 已重新连接';
+      final title = device == null ? selectedTitle : titleFor(device);
+      status = languageCode == 'en' ? '$title reconnected' : '$title 已重新连接';
       notifyListeners();
       return device;
     } on TimeoutException {
-      status = '$selectedTitle 离线，等待重新上线';
+      status = languageCode == 'en'
+          ? '$selectedTitle is offline, waiting to come back'
+          : '$selectedTitle 离线，等待重新上线';
       notifyListeners();
       return null;
     }

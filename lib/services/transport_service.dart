@@ -718,8 +718,15 @@ class TransportService {
 
   Future<Response> _receiveTransferStart(Request request) =>
       _withTrustedEnvelope(request, (peer, payload) async {
+        final conversation = await _db.ensureConversation(peer);
+        final at = DateTime.now();
         final file = await _fileStore.createReceiveFile(
           _string(payload['file_name'], 'received.bin'),
+          conversationFolder: FileStore.conversationFolder(
+            peer.displayName,
+            peer.id,
+          ),
+          at: at,
         );
         final id = _string(payload['id'], _uuid.v4());
         final fileName = _string(payload['file_name'], p.basename(file.path));
@@ -737,11 +744,10 @@ class TransportService {
                 mimeType: Value(_nullableString(payload['mime_type'])),
                 status: 'receiving',
                 totalChunks: Value(_int(payload['total_chunks'])),
-                createdAt: DateTime.now(),
-                updatedAt: DateTime.now(),
+                createdAt: at,
+                updatedAt: at,
               ),
             );
-        final conversation = await _db.ensureConversation(peer);
         await _db.addMessage(
           ChatMessagesCompanion.insert(
             id: _uuid.v4(),
@@ -878,6 +884,11 @@ class TransportService {
         sourcePath: transfer.filePath!,
         fileName: transfer.fileName,
         mimeType: transfer.mimeType,
+        conversationFolder: FileStore.conversationFolder(
+          peer.displayName,
+          peer.id,
+        ),
+        at: transfer.createdAt,
       );
       await _db.markTransferSaved(
         transferId: id,

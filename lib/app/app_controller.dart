@@ -352,10 +352,18 @@ class AppController extends ChangeNotifier {
     busy = true;
     notifyListeners();
     try {
+      final peer = await db.getDevice(message.peerDeviceId);
+      final transfers = await db.listTransfersByIds([transferId]);
+      final transfer = transfers.isEmpty ? null : transfers.first;
       final saved = await fileStore.saveToDownloads(
         sourcePath: path,
         fileName: message.fileName ?? p.basename(path),
         mimeType: message.mimeType,
+        conversationFolder: FileStore.conversationFolder(
+          peer?.displayName ?? message.peerDeviceId,
+          message.peerDeviceId,
+        ),
+        at: transfer?.createdAt ?? DateTime.now(),
       );
       await db.markTransferSaved(
         transferId: transferId,

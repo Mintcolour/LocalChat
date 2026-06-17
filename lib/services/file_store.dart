@@ -14,6 +14,22 @@ class SavedFile {
 class FileStore {
   static const _downloadsChannel = MethodChannel('localchat/downloads');
 
+  /// 将设备显示名清洗为可用作目录名的会话文件夹名，空名回退到设备 ID。
+  static String conversationFolder(String displayName, String deviceId) {
+    final cleaned = displayName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    if (cleaned.isEmpty) {
+      return deviceId.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    }
+    return cleaned;
+  }
+
+  /// 按年月生成 `yy/mm` 相对子路径。
+  static String yearMonthSubpath(DateTime at) {
+    final yy = (at.year % 100).toString().padLeft(2, '0');
+    final mm = at.month.toString().padLeft(2, '0');
+    return p.join(yy, mm);
+  }
+
   Future<Directory> receiveDirectory() async {
     if (Platform.isWindows) {
       return _downloadsDirectory();
@@ -24,8 +40,14 @@ class FileStore {
     return dir;
   }
 
-  Future<File> createReceiveFile(String fileName) async {
-    final dir = await receiveDirectory();
+  Future<File> createReceiveFile(
+    String fileName, {
+    required String conversationFolder,
+    required DateTime at,
+  }) async {
+    final base = await receiveDirectory();
+    final dir = Directory(p.join(base.path, conversationFolder, yearMonthSubpath(at)));
+    await dir.create(recursive: true);
     return _uniqueFile(dir, fileName);
   }
 
@@ -33,13 +55,17 @@ class FileStore {
     required String sourcePath,
     required String fileName,
     String? mimeType,
+    required String conversationFolder,
+    required DateTime at,
   }) async {
+    final subpath = p.join(conversationFolder, yearMonthSubpath(at));
     if (Platform.isAndroid) {
       final result = await _downloadsChannel
           .invokeMapMethod<String, Object?>('saveFile', {
             'sourcePath': sourcePath,
             'fileName': fileName,
             'mimeType': mimeType ?? 'application/octet-stream',
+            'subpath': subpath,
           });
       return SavedFile(
         path: result?['path'] as String?,
@@ -47,7 +73,9 @@ class FileStore {
       );
     }
     final source = File(sourcePath);
-    final dir = await _downloadsDirectory();
+    final base = await _downloadsDirectory();
+    final dir = Directory(p.join(base.path, subpath));
+    await dir.create(recursive: true);
     if (p.normalize(p.dirname(source.path)).toLowerCase() ==
         p.normalize(dir.path).toLowerCase()) {
       return SavedFile(path: source.path);

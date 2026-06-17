@@ -30,7 +30,8 @@ class MainActivity : FlutterActivity() {
                         ?: throw IllegalArgumentException("sourcePath is required")
                     val fileName = call.argument<String>("fileName") ?: File(sourcePath).name
                     val mimeType = call.argument<String>("mimeType") ?: "application/octet-stream"
-                    val saved = saveFileToDownloads(sourcePath, fileName, mimeType)
+                    val subpath = call.argument<String>("subpath") ?: ""
+                    val saved = saveFileToDownloads(sourcePath, fileName, mimeType, subpath)
                     result.success(saved)
                 } catch (error: Throwable) {
                     result.error("save_failed", error.message, null)
@@ -54,15 +55,23 @@ class MainActivity : FlutterActivity() {
         sourcePath: String,
         fileName: String,
         mimeType: String,
+        subpath: String,
     ): Map<String, String?> {
         val source = File(sourcePath)
         require(source.exists()) { "Source file does not exist" }
         val safeName = fileName.replace(Regex("""[\\/:*?"<>|]"""), "_")
+        // 清洗子路径中的非法字符，保留目录层级。
+        val cleanedSubpath = subpath.split("/")
+            .map { it.replace(Regex("""[\\/:*?"<>|]"""), "_").trim() }
+            .filter { it.isNotEmpty() && it != "." && it != ".." }
+            .joinToString("/")
+        val relativeBase = "${Environment.DIRECTORY_DOWNLOADS}/LocalChat" +
+            (if (cleanedSubpath.isNotEmpty()) "/$cleanedSubpath" else "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, safeName)
                 put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/LocalChat")
+                put(MediaStore.Downloads.RELATIVE_PATH, relativeBase)
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
             val resolver = applicationContext.contentResolver
@@ -75,14 +84,14 @@ class MainActivity : FlutterActivity() {
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
             return mapOf(
-                "path" to "Downloads/LocalChat/$safeName",
+                "path" to "$relativeBase/$safeName",
                 "uri" to uri.toString(),
             )
         }
 
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "LocalChat",
+            "LocalChat/$cleanedSubpath",
         )
         dir.mkdirs()
         val target = uniqueFile(dir, safeName)

@@ -18,6 +18,7 @@ import '../services/transport_service.dart';
 
 const _autoCopyReceivedTextKey = 'auto_copy_received_text';
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
+const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
 class AppController extends ChangeNotifier {
   AppController() : db = AppDatabase(), fileStore = FileStore() {
@@ -63,7 +64,10 @@ class AppController extends ChangeNotifier {
   StreamSubscription<PendingPairRequest>? _pairRequestSub;
   StreamSubscription<List<SharedMediaFile>>? _sharingSub;
   Timer? _presenceTimer;
+  Timer? _refreshTimer;
   bool _refreshingPresence = false;
+  bool _refreshInFlight = false;
+  bool _refreshQueued = false;
 
   Future<void> initialize() async {
     busy = true;
@@ -76,14 +80,16 @@ class AppController extends ChangeNotifier {
       transportService.reconnectPeer = _waitForReconnectedPeer;
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
-      _transportSub = transportService.updates.listen((_) => refresh());
+      _transportSub = transportService.updates.listen(
+        (_) => _scheduleRefresh(),
+      );
       _notificationSub = transportService.notifications.listen((message) {
         notificationText = message;
         notificationSerial++;
         status = message;
         notifyListeners();
       });
-      _discoverySub = discoveryService.peers.listen((_) => refresh());
+      _discoverySub = discoveryService.peers.listen((_) => _scheduleRefresh());
       _pairRequestSub = transportService.pairRequests.listen((request) {
         pendingPairRequest = request;
         status = '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
@@ -107,27 +113,42 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    conversations = await db.listConversations();
-    await db.deleteStaleUntrustedDevices(
-      DateTime.now().subtract(_staleDiscoveredDeviceAge),
-    );
-    devices = await db.listDevices();
-    _sortDevices();
-    if (selectedDevice != null) {
-      selectedDevice =
-          devices
-              .where((device) => device.id == selectedDevice!.id)
-              .firstOrNull ??
-          selectedDevice;
-      selectedConversation = await db.ensureConversation(selectedDevice!);
-      messages = await db.listMessages(selectedConversation!.id);
-      final transferIds = messages
-          .map((message) => message.transferId)
-          .whereType<String>();
-      final transfers = await db.listTransfersByIds(transferIds);
-      transfersById = {for (final transfer in transfers) transfer.id: transfer};
+    if (_refreshInFlight) {
+      _refreshQueued = true;
+      return;
+    }
+    _refreshInFlight = true;
+    try {
+      conversations = await db.listConversations();
+      await db.deleteStaleUntrustedDevices(
+        DateTime.now().subtract(_staleDiscoveredDeviceAge),
+      );
+      devices = await db.listDevices();
+      _sortDevices();
+      if (selectedDevice != null) {
+        selectedDevice =
+            devices
+                .where((device) => device.id == selectedDevice!.id)
+                .firstOrNull ??
+            selectedDevice;
+        selectedConversation = await db.ensureConversation(selectedDevice!);
+        messages = await db.listMessages(selectedConversation!.id);
+        final transferIds = messages
+            .map((message) => message.transferId)
+            .whereType<String>();
+        final transfers = await db.listTransfersByIds(transferIds);
+        transfersById = {
+          for (final transfer in transfers) transfer.id: transfer,
+        };
+      }
+    } finally {
+      _refreshInFlight = false;
     }
     notifyListeners();
+    if (_refreshQueued) {
+      _refreshQueued = false;
+      _scheduleRefresh();
+    }
   }
 
   Future<void> selectDevice(Device device) async {
@@ -420,6 +441,26 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  void _scheduleRefresh() {
+    if (_refreshTimer?.isActive == true) {
+      _refreshQueued = true;
+      return;
+    }
+    _refreshTimer = Timer(_refreshCoalesceDelay, () {
+      _runScheduledRefresh();
+    });
+  }
+
+  Future<void> _runScheduledRefresh() async {
+    try {
+      await refresh();
+    } catch (error) {
+      lastError = '$error';
+      status = '刷新失败';
+      notifyListeners();
+    }
+  }
+
   Future<Device?> _waitForReconnectedPeer(String deviceId) async {
     final selectedTitle =
         selectedDevice?.id == deviceId && selectedDevice != null
@@ -476,6 +517,7 @@ class AppController extends ChangeNotifier {
     _pairRequestSub?.cancel();
     _sharingSub?.cancel();
     _presenceTimer?.cancel();
+    _refreshTimer?.cancel();
     discoveryService.stop();
     transportService.stop();
     db.close();

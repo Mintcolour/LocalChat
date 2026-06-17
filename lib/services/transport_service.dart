@@ -23,6 +23,7 @@ import 'security_service.dart';
 
 const _streamFrameMagic = 0x4C434632; // LCF2
 const _streamFrameHeaderLength = 24;
+const _progressPersistInterval = Duration(milliseconds: 300);
 
 class TransportService {
   TransportService(
@@ -47,6 +48,8 @@ class TransportService {
   final _notifications = StreamController<String>.broadcast();
   final _pairRequests = StreamController<PendingPairRequest>.broadcast();
   final Map<String, Completer<bool>> _pendingPairApprovals = {};
+  final Map<String, DateTime> _lastProgressPersistedAt = {};
+  final Map<String, int> _lastProgressBytes = {};
   HttpServer? _server;
   int _port = 0;
   Future<Device?> Function(String deviceId)? reconnectPeer;
@@ -460,7 +463,7 @@ class TransportService {
           rethrow;
         }
         targetPeer = resolved;
-        await _markTransferProgress(transferId, 0);
+        await _markTransferProgress(transferId, 0, force: true);
         await _sendFileAttempt(
           targetPeer,
           file,
@@ -596,7 +599,11 @@ class TransportService {
       );
       yield _encodeFrame(encrypted);
       sent += tail.length;
-      await _markTransferProgress(transferId, sent.clamp(0, length));
+      await _markTransferProgress(
+        transferId,
+        sent.clamp(0, length),
+        force: true,
+      );
     }
   }
 
@@ -633,7 +640,11 @@ class TransportService {
     if (tail.isNotEmpty || length == 0) {
       await _sendChunk(peer, transferId, index, tail);
       sent += tail.length;
-      await _markTransferProgress(transferId, sent.clamp(0, length));
+      await _markTransferProgress(
+        transferId,
+        sent.clamp(0, length),
+        force: true,
+      );
     }
   }
 
@@ -994,13 +1005,34 @@ class TransportService {
     headers: {'content-type': 'application/json; charset=utf-8'},
   );
 
-  Future<void> _markTransferProgress(String id, int receivedBytes) async {
+  Future<void> _markTransferProgress(
+    String id,
+    int receivedBytes, {
+    bool force = false,
+  }) async {
+    final now = DateTime.now();
+    final lastBytes = _lastProgressBytes[id];
+    final lastAt = _lastProgressPersistedAt[id];
+    if (!force &&
+        lastBytes != null &&
+        receivedBytes <= lastBytes &&
+        lastAt != null) {
+      return;
+    }
+    if (!force &&
+        lastAt != null &&
+        now.difference(lastAt) < _progressPersistInterval) {
+      _lastProgressBytes[id] = receivedBytes;
+      return;
+    }
     await (_db.update(_db.transfers)..where((tbl) => tbl.id.equals(id))).write(
       TransfersCompanion(
         receivedBytes: Value(receivedBytes),
-        updatedAt: Value(DateTime.now()),
+        updatedAt: Value(now),
       ),
     );
+    _lastProgressPersistedAt[id] = now;
+    _lastProgressBytes[id] = receivedBytes;
     _updates.add(null);
   }
 
@@ -1016,6 +1048,8 @@ class TransportService {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    _lastProgressPersistedAt.remove(id);
+    _lastProgressBytes.remove(id);
     await (_db.update(_db.chatMessages)
           ..where((tbl) => tbl.transferId.equals(id)))
         .write(ChatMessagesCompanion(status: Value(status)));

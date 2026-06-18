@@ -17,9 +17,12 @@ import '../services/file_store.dart';
 import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
+import '../services/window_service.dart';
 
 const _autoCopyReceivedTextKey = 'auto_copy_received_text';
 const _languageCodeKey = 'language_code';
+const _trayEnabledKey = 'tray_enabled';
+const _autostartEnabledKey = 'autostart_enabled';
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
@@ -42,6 +45,7 @@ class AppController extends ChangeNotifier {
   final AppDatabase db;
   final FileStore fileStore;
   final ClipboardImportService clipboardImportService;
+  final WindowService windowService = const WindowService();
   late final IdentityService identityService;
   late final SecurityService securityService;
   late final TransportService transportService;
@@ -58,6 +62,8 @@ class AppController extends ChangeNotifier {
   bool initialized = false;
   bool busy = false;
   bool autoCopyReceivedText = true;
+  bool trayEnabled = true;
+  bool autostartEnabled = false;
   String languageCode = 'zh';
   String status = '正在启动 LocalChat...';
   String? lastError;
@@ -90,6 +96,7 @@ class AppController extends ChangeNotifier {
       transportService.autoCopyReceivedText = autoCopyReceivedText;
       transportService.languageCode = languageCode;
       transportService.reconnectPeer = _waitForReconnectedPeer;
+      await _loadWindowPreferences();
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
       _transportSub = transportService.updates.listen(
@@ -236,6 +243,55 @@ class AppController extends ChangeNotifier {
               : '已关闭自动复制收到的文字');
     notifyListeners();
   }
+
+  /// 读取托盘/开机自启偏好，并与原生状态同步。仅 Windows 生效。
+  Future<void> _loadWindowPreferences() async {
+    if (!windowService.isSupported) return;
+    final storedTray = await db.getSetting(_trayEnabledKey);
+    trayEnabled = storedTray != 'false';
+    final storedAutostart = await db.getSetting(_autostartEnabledKey);
+    // 优先信任原生实际状态（用户可能在系统设置里改动过）。
+    final nativeAutostart = await windowService.isAutostartEnabled();
+    autostartEnabled = storedAutostart == 'true' || nativeAutostart;
+    if (autostartEnabled != nativeAutostart) {
+      await windowService.setAutostartEnabled(autostartEnabled);
+    }
+    await windowService.setTrayEnabled(trayEnabled);
+  }
+
+  Future<void> setTrayEnabled(bool value) async {
+    trayEnabled = value;
+    await db.setSetting(_trayEnabledKey, value ? 'true' : 'false');
+    await windowService.setTrayEnabled(value);
+    status = value
+        ? (languageCode == 'en'
+              ? 'Minimize to tray enabled'
+              : '已开启最小化到托盘')
+        : (languageCode == 'en'
+              ? 'Minimize to tray disabled'
+              : '已关闭最小化到托盘');
+    notifyListeners();
+  }
+
+  Future<void> setAutostartEnabled(bool value) async {
+    autostartEnabled = value;
+    await db.setSetting(_autostartEnabledKey, value ? 'true' : 'false');
+    await windowService.setAutostartEnabled(value);
+    status = value
+        ? (languageCode == 'en'
+              ? 'Start on boot enabled'
+              : '已开启开机自启')
+        : (languageCode == 'en'
+              ? 'Start on boot disabled'
+              : '已关闭开机自启');
+    notifyListeners();
+  }
+
+  /// 请求最小化到托盘（关窗时由 UI 触发）。
+  Future<void> minimizeToTray() => windowService.minimizeToTray();
+
+  /// 请求真正退出（托盘菜单退出项触发）。
+  Future<void> quitApp() => windowService.quit();
 
   Future<void> rescan() async {
     status = languageCode == 'en'

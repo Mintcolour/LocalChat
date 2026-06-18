@@ -647,6 +647,22 @@ Future<void> _showSettingsDialog(
                   },
                 ),
               ),
+              if (Platform.isWindows) ...[
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(controller.text.minimizeToTray),
+                  subtitle: Text(controller.text.minimizeToTraySubtitle),
+                  value: controller.trayEnabled,
+                  onChanged: controller.setTrayEnabled,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(controller.text.startOnBoot),
+                  subtitle: Text(controller.text.startOnBootSubtitle),
+                  value: controller.autostartEnabled,
+                  onChanged: controller.setAutostartEnabled,
+                ),
+              ],
               const Divider(),
               ListTile(
                 contentPadding: EdgeInsets.zero,

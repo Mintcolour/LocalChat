@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "autostart.h"
 
 namespace {
 
@@ -177,6 +178,91 @@ bool FlutterWindow::OnCreate() {
         result->NotImplemented();
       });
   clipboard_channel_ = std::move(clipboard_channel);
+
+  // 托盘与窗口控制通道：最小化到托盘、显示、退出、开机自启开关。
+  tray_.AddTrayIcon(GetHandle());
+  tray_.SetShowCallback([this]() { ShowWindow(GetHandle(), SW_SHOWNORMAL); });
+  tray_.SetQuitCallback([this]() {
+    tray_.RemoveTrayIcon();
+    SetHideOnClose(false);
+    SetQuitOnClose(true);
+    Destroy();
+  });
+  // 默认开启"关窗隐藏到托盘"以实现后台常驻。
+  SetHideOnClose(true);
+  auto window_channel =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "localchat/window",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_channel->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        const auto& method = call.method_name();
+        if (method == "minimizeToTray") {
+          ShowWindow(GetHandle(), SW_HIDE);
+          result->Success();
+          return;
+        }
+        if (method == "show") {
+          ShowWindow(GetHandle(), SW_SHOWNORMAL);
+          SetForegroundWindow(GetHandle());
+          result->Success();
+          return;
+        }
+        if (method == "quit") {
+          tray_.RemoveTrayIcon();
+          SetHideOnClose(false);
+          SetQuitOnClose(true);
+          Destroy();
+          result->Success();
+          return;
+        }
+        if (method == "isAutostartEnabled") {
+          result->Success(flutter::EncodableValue(autostart::IsEnabled()));
+          return;
+        }
+        if (method == "setAutostartEnabled") {
+          const auto* args = call.arguments();
+          bool enabled = false;
+          if (args != nullptr) {
+            const auto* map = std::get_if<flutter::EncodableMap>(args);
+            if (map != nullptr) {
+              auto it = map->find(flutter::EncodableValue("enabled"));
+              if (it != map->end() && std::holds_alternative<bool>(it->second)) {
+                enabled = std::get<bool>(it->second);
+              }
+            }
+          }
+          result->Success(flutter::EncodableValue(autostart::SetEnabled(enabled)));
+          return;
+        }
+        if (method == "setTrayEnabled") {
+          const auto* args = call.arguments();
+          bool enabled = true;
+          if (args != nullptr) {
+            const auto* map = std::get_if<flutter::EncodableMap>(args);
+            if (map != nullptr) {
+              auto it = map->find(flutter::EncodableValue("enabled"));
+              if (it != map->end() && std::holds_alternative<bool>(it->second)) {
+                enabled = std::get<bool>(it->second);
+              }
+            }
+          }
+          if (enabled) {
+            tray_.AddTrayIcon(GetHandle());
+            SetHideOnClose(true);
+          } else {
+            tray_.RemoveTrayIcon();
+            SetHideOnClose(false);
+          }
+          result->Success();
+          return;
+        }
+        result->NotImplemented();
+      });
+  window_channel_ = std::move(window_channel);
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -217,6 +303,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+  }
+
+  // 托盘图标回调（左键双击显示、右键菜单）。
+  if (tray_.HandleCallback(wparam, lparam)) {
+    return 0;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

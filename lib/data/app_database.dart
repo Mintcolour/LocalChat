@@ -188,6 +188,9 @@ class AppDatabase extends _$AppDatabase {
     required String avatarColor,
   }) async {
     final existing = await getDevice(id);
+    // 手动添加的跨网段设备：保留用户填写的 host/port 与 endpointSource，
+    // 不被 UDP 广播或入站请求的源 IP 覆盖（仅刷新展示名、公钥、头像、lastSeen）。
+    final isManual = existing?.endpointSource == 'manual';
     await into(devices).insertOnConflictUpdate(
       DevicesCompanion.insert(
         id: id,
@@ -199,9 +202,10 @@ class AppDatabase extends _$AppDatabase {
         avatarSeed: Value(avatarSeed),
         avatarColor: Value(avatarColor),
         trusted: Value(existing?.trusted ?? false),
-        host: Value(host),
-        port: Value(port),
+        host: Value(isManual ? existing!.host! : host),
+        port: Value(isManual ? existing!.port! : port),
         lastSeen: Value(DateTime.now()),
+        endpointSource: Value(existing?.endpointSource ?? 'auto'),
         createdAt: existing == null ? DateTime.now() : existing.createdAt,
       ),
     );
@@ -234,6 +238,7 @@ class AppDatabase extends _$AppDatabase {
         host: Value(host),
         port: Value(port),
         lastSeen: Value(DateTime.now()),
+        endpointSource: Value(existing?.endpointSource ?? 'auto'),
         createdAt: existing?.createdAt ?? DateTime.now(),
       ),
     );
@@ -243,12 +248,55 @@ class AppDatabase extends _$AppDatabase {
     required String id,
     required String host,
     required int port,
+    bool force = false,
   }) async {
+    // 手动添加的跨网段端点不应被 UDP 发现或 TCP 源 IP 自动覆盖。
+    if (!force) {
+      final existing = await getDevice(id);
+      if (existing != null && existing.endpointSource == 'manual') {
+        return;
+      }
+    }
     await (update(devices)..where((tbl) => tbl.id.equals(id))).write(
       DevicesCompanion(
         host: Value(host),
         port: Value(port),
         lastSeen: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  /// 以手动方式落库一个跨网段设备（未信任，等待配对确认）。
+  /// host/port 来自用户输入，endpointSource 标记为 manual，避免被自动逻辑改写。
+  Future<void> upsertManualDevice({
+    required String id,
+    required String displayName,
+    required String platform,
+    required String host,
+    required int port,
+    required String signingPublicKey,
+    required String exchangePublicKey,
+    required String fingerprint,
+    required String avatarSeed,
+    required String avatarColor,
+  }) async {
+    final existing = await getDevice(id);
+    await into(devices).insertOnConflictUpdate(
+      DevicesCompanion.insert(
+        id: id,
+        displayName: displayName,
+        platform: platform,
+        signingPublicKey: signingPublicKey,
+        exchangePublicKey: exchangePublicKey,
+        fingerprint: fingerprint,
+        avatarSeed: Value(avatarSeed),
+        avatarColor: Value(avatarColor),
+        trusted: Value(existing?.trusted ?? false),
+        host: Value(host),
+        port: Value(port),
+        lastSeen: Value(DateTime.now()),
+        endpointSource: const Value('manual'),
+        createdAt: existing == null ? DateTime.now() : existing.createdAt,
       ),
     );
   }

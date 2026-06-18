@@ -15,6 +15,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/formatters.dart';
+import '../core/device_profile.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
 import 'file_store.dart';
@@ -280,6 +281,47 @@ class TransportService {
       avatarColor: _string(data['avatar_color'], peer.avatarColor),
     );
     _updates.add(null);
+  }
+
+  /// 跨网段手动加好友：按用户输入的 host:port 探测对端身份。
+  /// 命中 /v1/hello 后以 endpointSource='manual' 落库（未信任，等待配对确认）。
+  /// 返回落库后的设备；连接失败或非本协议返回 null。
+  Future<Device?> fetchPeerIdentity(String host, int port) async {
+    try {
+      final response = await _dio.getUri<Map<String, dynamic>>(
+        Uri.parse('http://$host:$port/v1/hello'),
+      );
+      final data = response.data;
+      if (data == null || data['protocol_version'] != protocolVersion) {
+        return null;
+      }
+      final deviceId = data['device_id'];
+      if (deviceId is! String || deviceId.isEmpty) return null;
+      final listenPort = data['listen_port'] is int
+          ? data['listen_port'] as int
+          : port;
+      final fingerprint = _string(data['public_key_fingerprint'], '');
+      final avatarSeed = _string(data['avatar_seed'], fingerprint);
+      await _db.upsertManualDevice(
+        id: deviceId,
+        displayName: _string(
+          data['nickname'],
+          _string(data['display_name'], 'Unknown'),
+        ),
+        platform: _string(data['platform'], 'unknown'),
+        host: host,
+        port: listenPort > 0 ? listenPort : port,
+        signingPublicKey: _string(data['signing_public_key'], ''),
+        exchangePublicKey: _string(data['exchange_public_key'], ''),
+        fingerprint: fingerprint,
+        avatarSeed: avatarSeed,
+        avatarColor: _string(data['avatar_color'], avatarColorFor(avatarSeed)),
+      );
+      _updates.add(null);
+      return _db.getDevice(deviceId);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> checkPeer(Device peer) async {

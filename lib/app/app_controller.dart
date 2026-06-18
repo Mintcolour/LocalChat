@@ -361,6 +361,41 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  /// 跨网段手动加好友：按 host:port 探测对端身份并落库（未信任）。
+  /// 返回落库设备；失败返回 null。成功后用户可在设备列表发起配对。
+  Future<Device?> addPeerManually(String host, int port) async {
+    busy = true;
+    status = languageCode == 'en'
+        ? 'Connecting to $host:$port...'
+        : '正在连接 $host:$port...';
+    notifyListeners();
+    try {
+      final device = await transportService.fetchPeerIdentity(host, port);
+      if (device == null) {
+        lastError = languageCode == 'en'
+            ? 'Cannot reach $host:$port or not a LocalChat device'
+            : '无法连接 $host:$port，或对方不是 LocalChat 设备';
+        status = lastError!;
+        notifyListeners();
+        return null;
+      }
+      await refresh();
+      status = languageCode == 'en'
+          ? 'Found ${device.displayName}. Pair to trust.'
+          : '已发现 ${device.displayName}，请配对以建立信任';
+      notifyListeners();
+      return device;
+    } catch (error) {
+      lastError = '$error';
+      status = languageCode == 'en' ? 'Add peer failed' : '添加好友失败';
+      notifyListeners();
+      return null;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> sendText(String text) async {
     final peer = await _currentSelectedPeer();
     if (peer == null || !peer.trusted || text.trim().isEmpty) return;
@@ -674,8 +709,22 @@ class AppController extends ChangeNotifier {
         : '$selectedTitle 连接断开，正在自动重连...';
     lastError = null;
     notifyListeners();
-    await discoveryService.announce();
     final existing = await db.getDevice(deviceId);
+    // 手动添加的跨网段设备：直接用存储的 host:port 探测，不依赖 UDP 广播。
+    if (existing != null &&
+        existing.host != null &&
+        existing.port != null &&
+        existing.endpointSource == 'manual') {
+      final ok = await transportService.checkPeer(existing);
+      if (ok) {
+        status = languageCode == 'en'
+            ? '$selectedTitle reconnected'
+            : '$selectedTitle 已重新连接';
+        notifyListeners();
+        return existing;
+      }
+    }
+    await discoveryService.announce();
     if (existing != null &&
         existing.host != null &&
         existing.port != null &&

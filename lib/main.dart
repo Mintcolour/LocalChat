@@ -663,6 +663,18 @@ Future<void> _showSettingsDialog(
                   onChanged: controller.setAutostartEnabled,
                 ),
               ],
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(controller.text.addPeerManually),
+                subtitle: Text(controller.text.addPeerManuallySubtitle),
+                trailing: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showAddPeerDialog(context, controller);
+                  },
+                  child: Text(controller.text.add),
+                ),
+              ),
               const Divider(),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -689,6 +701,62 @@ Future<void> _showSettingsDialog(
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
             child: Text(controller.text.done),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> _showAddPeerDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  var host = '';
+  var port = '40123';
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        title: Text(controller.text.addPeerManually),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                decoration: InputDecoration(
+                  labelText: controller.text.peerHost,
+                  hintText: '192.168.10.5',
+                ),
+                onChanged: (value) => host = value.trim(),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                decoration: InputDecoration(
+                  labelText: controller.text.peerPort,
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (value) => port = value.trim(),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(controller.text.cancel),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final portValue = int.tryParse(port);
+              if (host.isEmpty || portValue == null || portValue <= 0) {
+                return;
+              }
+              Navigator.of(dialogContext).pop();
+              await controller.addPeerManually(host, portValue);
+            },
+            child: Text(controller.text.add),
           ),
         ],
       ),

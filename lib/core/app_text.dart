@@ -77,6 +77,22 @@ class AppText {
   String get openFolder => en ? 'Open folder' : '打开文件夹';
   String get saveLocal => en ? 'Save locally' : '保存到本地';
   String get imageNotSupported => en ? 'Image not supported' : '图片不可预览';
+  String get chooseFolder => en ? 'Choose folder' : '选择文件夹';
+  String get minimizeToTray => en ? 'Minimize to tray' : '最小化到托盘';
+  String get minimizeToTraySubtitle => en
+      ? 'Keep running in background when window closes'
+      : '关闭窗口时保持后台运行';
+  String get startOnBoot => en ? 'Start on boot' : '开机自启';
+  String get startOnBootSubtitle => en
+      ? 'Launch LocalChat automatically when Windows starts'
+      : 'Windows 启动时自动运行 LocalChat';
+  String get addPeerManually => en ? 'Add remote peer' : '添加跨网段好友';
+  String get addPeerManuallySubtitle => en
+      ? 'Connect to a peer on another subnet by IP and port'
+      : '通过 IP 和端口连接其他网段的设备';
+  String get peerHost => en ? 'Peer IP / host' : '对方 IP / 主机';
+  String get peerPort => en ? 'Port' : '端口';
+  String get add => en ? 'Add' : '添加';
 
   String peerStatus(Device device, {DateTime? now}) {
     if (!device.trusted) return en ? 'Unpaired' : '未配对';

@@ -60,4 +60,28 @@ void main() {
     expect(envelope.toSignedPayload().containsKey('signature'), isFalse);
     expect(SecureEnvelope.fromJson(envelope.toJson()).signature, 'sig');
   });
+
+  test('folder capability is advertised and round trips through discovery', () {
+    final peer = DiscoveredPeer(
+      deviceId: 'device-1',
+      displayName: 'Office PC',
+      platform: 'windows',
+      host: '',
+      port: 40123,
+      signingPublicKey: 'signing',
+      exchangePublicKey: 'exchange',
+      fingerprint: 'abcdef0123456789',
+      avatarSeed: 'abcdef0123456789',
+      avatarColor: '#2563EB',
+      lastSeen: DateTime.utc(2026),
+    );
+    expect(peer.capabilities, contains(folderCapability));
+
+    final parsed = DiscoveredPeer.fromDatagram(
+      utf8.encode(jsonEncode(peer.toJson())),
+      '192.168.1.20',
+    );
+    expect(parsed, isNotNull);
+    expect(parsed!.capabilities, contains(folderCapability));
+  });
 }

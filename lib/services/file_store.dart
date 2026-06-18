@@ -30,6 +30,24 @@ class FileStore {
     return p.join(yy, mm);
   }
 
+  /// 将文件夹递归传输的相对路径清洗为安全的目录段列表。
+  /// 输入按 POSIX `/` 拆分，逐段清洗非法字符，剔除 `.`、`..`、空段，防止目录穿越。
+  static List<String> sanitizeRelativeDirs(String? relativePath) {
+    if (relativePath == null || relativePath.isEmpty) return const [];
+    final segments = <String>[];
+    for (final raw in relativePath.split('/')) {
+      final cleaned = raw.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+      if (cleaned.isEmpty || cleaned == '.' || cleaned == '..') continue;
+      segments.add(cleaned);
+    }
+    // 丢弃末尾的文件名段：相对路径形如 "root/sub/file.txt"，
+    // 目录段只取到倒数第二段，文件名由调用方单独传入 fileName。
+    if (segments.isNotEmpty) {
+      segments.removeLast();
+    }
+    return segments;
+  }
+
   Future<Directory> receiveDirectory() async {
     if (Platform.isWindows) {
       return _downloadsDirectory();
@@ -44,9 +62,16 @@ class FileStore {
     String fileName, {
     required String conversationFolder,
     required DateTime at,
+    String? relativePath,
   }) async {
     final base = await receiveDirectory();
-    final dir = Directory(p.join(base.path, conversationFolder, yearMonthSubpath(at)));
+    final dirSegments = <String>[
+      base.path,
+      conversationFolder,
+      yearMonthSubpath(at),
+      ...sanitizeRelativeDirs(relativePath),
+    ];
+    final dir = Directory(p.joinAll(dirSegments));
     await dir.create(recursive: true);
     return _uniqueFile(dir, fileName);
   }
@@ -57,8 +82,14 @@ class FileStore {
     String? mimeType,
     required String conversationFolder,
     required DateTime at,
+    String? relativePath,
   }) async {
-    final subpath = p.join(conversationFolder, yearMonthSubpath(at));
+    final relativeDirs = sanitizeRelativeDirs(relativePath);
+    final subpath = p.joinAll([
+      conversationFolder,
+      yearMonthSubpath(at),
+      ...relativeDirs,
+    ]);
     if (Platform.isAndroid) {
       final result = await _downloadsChannel
           .invokeMapMethod<String, Object?>('saveFile', {

@@ -19,6 +19,9 @@ class Devices extends Table {
   BoolColumn get trusted => boolean().withDefault(const Constant(false))();
   DateTimeColumn get lastSeen => dateTime().nullable()();
   DateTimeColumn get createdAt => dateTime()();
+  // auto: 由 UDP 发现或 TCP 源 IP 自动学习的端点；manual: 用户手动填写的跨网段 IP:port，
+  // 不应被自动学习逻辑覆盖。
+  TextColumn get endpointSource => text().withDefault(const Constant('auto'))();
 
   @override
   Set<Column<Object>>? get primaryKey => {id};
@@ -47,6 +50,8 @@ class ChatMessages extends Table {
   TextColumn get mimeType => text().nullable()();
   TextColumn get status => text()();
   TextColumn get transferId => text().nullable()();
+  // 文件夹递归传输时相对根目录的路径（POSIX 分隔符），单文件为 null。
+  TextColumn get relativePath => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
 
   @override
@@ -67,6 +72,8 @@ class Transfers extends Table {
   TextColumn get status => text()();
   IntColumn get receivedBytes => integer().withDefault(const Constant(0))();
   IntColumn get totalChunks => integer().withDefault(const Constant(0))();
+  // 文件夹递归传输时相对根目录的路径（POSIX 分隔符），单文件为 null。
+  TextColumn get relativePath => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -90,7 +97,7 @@ class AppDatabase extends _$AppDatabase {
     : super(executor ?? driftDatabase(name: 'localchat'));
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -114,6 +121,13 @@ class AppDatabase extends _$AppDatabase {
             ),
           );
         }
+      }
+      if (from < 3) {
+        await m.addColumn(chatMessages, chatMessages.relativePath);
+        await m.addColumn(transfers, transfers.relativePath);
+      }
+      if (from < 4) {
+        await m.addColumn(devices, devices.endpointSource);
       }
     },
   );

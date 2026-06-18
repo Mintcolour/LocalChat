@@ -6,6 +6,9 @@ const legacyTransferChunkSize = 256 * 1024;
 const encryptedStreamChunkSize = 4 * 1024 * 1024;
 const encryptedStreamVersion = 2;
 const encryptedStreamCapability = 'encrypted_stream_v2';
+// 文件夹递归传输能力：对端在 /v1/transfers start 请求里携带 relative_path 字段，
+// 接收端按相对路径镜像落盘。旧版本不广播此能力，发送时回退为纯平铺。
+const folderCapability = 'folders_v1';
 
 enum PeerPresence { trusted, discovered }
 
@@ -54,6 +57,7 @@ class DiscoveredPeer {
       'pairing',
       'encrypted_chunks',
       encryptedStreamCapability,
+      folderCapability,
     ],
   });
 

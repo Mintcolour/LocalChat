@@ -50,6 +50,7 @@ void main() {
       avatarSeed: localB.avatarSeed,
       avatarColor: localB.avatarColor,
       trusted: false,
+      endpointSource: 'auto',
       lastSeen: DateTime.now(),
       createdAt: DateTime.now(),
     );

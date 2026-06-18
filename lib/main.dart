@@ -369,11 +369,22 @@ class _ChatPane extends StatelessWidget {
       onDragExited: (_) => onDragState(false),
       onDragDone: (details) {
         onDragState(false);
-        final paths = details.files
-            .where((file) => file.path.isNotEmpty)
-            .map((file) => file.path)
-            .toList();
-        controller.sendFiles(paths);
+        final files = <String>[];
+        final folders = <String>[];
+        for (final entry in details.files) {
+          if (entry.path.isEmpty) continue;
+          if (FileSystemEntity.isDirectorySync(entry.path)) {
+            folders.add(entry.path);
+          } else {
+            files.add(entry.path);
+          }
+        }
+        if (files.isNotEmpty) {
+          controller.sendFiles(files);
+        }
+        for (final folder in folders) {
+          controller.sendFolder(folder);
+        }
       },
       child: Column(
         children: [
@@ -811,6 +822,12 @@ class _Composer extends StatelessWidget {
               onPressed: enabled ? controller.pickAndSendFiles : null,
               icon: const Icon(Icons.attach_file),
             ),
+            if (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
+              IconButton(
+                tooltip: controller.text.chooseFolder,
+                onPressed: enabled ? controller.pickAndSendFolder : null,
+                icon: const Icon(Icons.folder_outlined),
+              ),
             IconButton(
               tooltip: controller.text.pasteFileOrImage,
               onPressed: enabled ? _pasteFromClipboard : null,
@@ -1009,7 +1026,9 @@ class _FileMessage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    message.fileName ?? controller.text.file,
+                    message.relativePath ??
+                        message.fileName ??
+                        controller.text.file,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),

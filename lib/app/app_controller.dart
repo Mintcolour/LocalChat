@@ -340,6 +340,73 @@ class AppController extends ChangeNotifier {
     await sendFiles(paths);
   }
 
+  /// 选择一个文件夹并递归发送，保留目录结构。
+  Future<void> pickAndSendFolder() async {
+    final folderPath = await FilePicker.platform.getDirectoryPath();
+    if (folderPath == null || folderPath.isEmpty) return;
+    await sendFolder(folderPath);
+  }
+
+  /// 递归展开 [folderPath]，按相对路径发送给已选中的可信设备。
+  Future<void> sendFolder(String folderPath) async {
+    final peer = await _currentSelectedPeer();
+    if (peer == null || !peer.trusted) {
+      status = languageCode == 'en'
+          ? 'Select a trusted device before sending a folder'
+          : '先选择一个已信任设备，再发送文件夹';
+      notifyListeners();
+      return;
+    }
+    final rootName = p.basename(folderPath);
+    final entries = <({String absolute, String relative})>[];
+    try {
+      final stream = Directory(folderPath).list(
+        recursive: true,
+        followLinks: false,
+      );
+      await for (final entity in stream) {
+        if (entity is File) {
+          final rel = p.relative(entity.path, from: folderPath);
+          // POSIX 化分隔符，保证跨平台一致（接收端按 / 拆分）。
+          final posixRel = p.join(rootName, rel).replaceAll(r'\', '/');
+          entries.add((absolute: entity.path, relative: posixRel));
+        }
+      }
+    } catch (error) {
+      lastError = '$error';
+      status = languageCode == 'en'
+          ? 'Failed to read folder $rootName'
+          : '读取文件夹 $rootName 失败';
+      notifyListeners();
+      return;
+    }
+    if (entries.isEmpty) {
+      status = languageCode == 'en'
+          ? 'Folder $rootName is empty'
+          : '文件夹 $rootName 为空';
+      notifyListeners();
+      return;
+    }
+    entries.sort((a, b) => a.relative.compareTo(b.relative));
+    busy = true;
+    notifyListeners();
+    try {
+      await transportService.sendFolder(peer, rootName, entries);
+      await refresh();
+      status = languageCode == 'en'
+          ? 'Folder $rootName sent to ${titleFor(peer)}'
+          : '${titleFor(peer)} 文件夹 $rootName 发送完成';
+    } catch (error) {
+      lastError = '$error';
+      status = languageCode == 'en'
+          ? '${titleFor(peer)} disconnected, folder transfer failed'
+          : '${titleFor(peer)} 连接断开，文件夹发送失败';
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> sendFiles(List<String> paths) async {
     final peer = await _currentSelectedPeer();
     if (peer == null || !peer.trusted || paths.isEmpty) {
@@ -416,6 +483,7 @@ class AppController extends ChangeNotifier {
           message.peerDeviceId,
         ),
         at: transfer?.createdAt ?? DateTime.now(),
+        relativePath: message.relativePath ?? transfer?.relativePath,
       );
       await db.markTransferSaved(
         transferId: transferId,

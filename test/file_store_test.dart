@@ -1,0 +1,53 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:localchat/services/file_store.dart';
+
+void main() {
+  group('FileStore.sanitizeRelativeDirs', () {
+    test('null or empty returns no segments', () {
+      expect(FileStore.sanitizeRelativeDirs(null), isEmpty);
+      expect(FileStore.sanitizeRelativeDirs(''), isEmpty);
+    });
+
+    test('drops the trailing filename segment, keeps directory segments', () {
+      // 输入 "root/sub/file.txt" → 目录段 ["root", "sub"]，文件名由调用方单独传入。
+      expect(
+        FileStore.sanitizeRelativeDirs('root/sub/file.txt'),
+        ['root', 'sub'],
+      );
+    });
+
+    test('single segment (root file) yields no directory segments', () {
+      expect(FileStore.sanitizeRelativeDirs('file.txt'), isEmpty);
+    });
+
+    test('strips path traversal and dot segments', () {
+      expect(
+        FileStore.sanitizeRelativeDirs('../root/../sub/./file.txt'),
+        ['root', 'sub'],
+      );
+    });
+
+    test('cleans illegal filename characters per segment', () {
+      // 每段单独清洗，分隔符不会被保留为路径穿越入口。
+      expect(
+        FileStore.sanitizeRelativeDirs('ro:ot/su<b/fi>le.txt'),
+        ['ro_ot', 'su_b'],
+      );
+    });
+
+    test('backslashes are treated as illegal characters within a single segment', () {
+      // 无 POSIX / 分隔时整串是一个段，反斜杠被清洗，removeLast 后无目录段。
+      expect(
+        FileStore.sanitizeRelativeDirs(r'root\sub\file.txt'),
+        isEmpty,
+      );
+    });
+
+    test('empty segments between slashes are dropped', () {
+      expect(
+        FileStore.sanitizeRelativeDirs('root//sub/file.txt'),
+        ['root', 'sub'],
+      );
+    });
+  });
+}

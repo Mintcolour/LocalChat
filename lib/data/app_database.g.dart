@@ -152,6 +152,18 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _endpointSourceMeta = const VerificationMeta(
+    'endpointSource',
+  );
+  @override
+  late final GeneratedColumn<String> endpointSource = GeneratedColumn<String>(
+    'endpoint_source',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('auto'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -167,6 +179,7 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     trusted,
     lastSeen,
     createdAt,
+    endpointSource,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -284,6 +297,15 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('endpoint_source')) {
+      context.handle(
+        _endpointSourceMeta,
+        endpointSource.isAcceptableOrUnknown(
+          data['endpoint_source']!,
+          _endpointSourceMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -345,6 +367,10 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
       )!,
+      endpointSource: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}endpoint_source'],
+      )!,
     );
   }
 
@@ -368,6 +394,7 @@ class Device extends DataClass implements Insertable<Device> {
   final bool trusted;
   final DateTime? lastSeen;
   final DateTime createdAt;
+  final String endpointSource;
   const Device({
     required this.id,
     required this.displayName,
@@ -382,6 +409,7 @@ class Device extends DataClass implements Insertable<Device> {
     required this.trusted,
     this.lastSeen,
     required this.createdAt,
+    required this.endpointSource,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -405,6 +433,7 @@ class Device extends DataClass implements Insertable<Device> {
       map['last_seen'] = Variable<DateTime>(lastSeen);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
+    map['endpoint_source'] = Variable<String>(endpointSource);
     return map;
   }
 
@@ -425,6 +454,7 @@ class Device extends DataClass implements Insertable<Device> {
           ? const Value.absent()
           : Value(lastSeen),
       createdAt: Value(createdAt),
+      endpointSource: Value(endpointSource),
     );
   }
 
@@ -447,6 +477,7 @@ class Device extends DataClass implements Insertable<Device> {
       trusted: serializer.fromJson<bool>(json['trusted']),
       lastSeen: serializer.fromJson<DateTime?>(json['lastSeen']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      endpointSource: serializer.fromJson<String>(json['endpointSource']),
     );
   }
   @override
@@ -466,6 +497,7 @@ class Device extends DataClass implements Insertable<Device> {
       'trusted': serializer.toJson<bool>(trusted),
       'lastSeen': serializer.toJson<DateTime?>(lastSeen),
       'createdAt': serializer.toJson<DateTime>(createdAt),
+      'endpointSource': serializer.toJson<String>(endpointSource),
     };
   }
 
@@ -483,6 +515,7 @@ class Device extends DataClass implements Insertable<Device> {
     bool? trusted,
     Value<DateTime?> lastSeen = const Value.absent(),
     DateTime? createdAt,
+    String? endpointSource,
   }) => Device(
     id: id ?? this.id,
     displayName: displayName ?? this.displayName,
@@ -497,6 +530,7 @@ class Device extends DataClass implements Insertable<Device> {
     trusted: trusted ?? this.trusted,
     lastSeen: lastSeen.present ? lastSeen.value : this.lastSeen,
     createdAt: createdAt ?? this.createdAt,
+    endpointSource: endpointSource ?? this.endpointSource,
   );
   Device copyWithCompanion(DevicesCompanion data) {
     return Device(
@@ -525,6 +559,9 @@ class Device extends DataClass implements Insertable<Device> {
       trusted: data.trusted.present ? data.trusted.value : this.trusted,
       lastSeen: data.lastSeen.present ? data.lastSeen.value : this.lastSeen,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      endpointSource: data.endpointSource.present
+          ? data.endpointSource.value
+          : this.endpointSource,
     );
   }
 
@@ -543,7 +580,8 @@ class Device extends DataClass implements Insertable<Device> {
           ..write('avatarColor: $avatarColor, ')
           ..write('trusted: $trusted, ')
           ..write('lastSeen: $lastSeen, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('endpointSource: $endpointSource')
           ..write(')'))
         .toString();
   }
@@ -563,6 +601,7 @@ class Device extends DataClass implements Insertable<Device> {
     trusted,
     lastSeen,
     createdAt,
+    endpointSource,
   );
   @override
   bool operator ==(Object other) =>
@@ -580,7 +619,8 @@ class Device extends DataClass implements Insertable<Device> {
           other.avatarColor == this.avatarColor &&
           other.trusted == this.trusted &&
           other.lastSeen == this.lastSeen &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.endpointSource == this.endpointSource);
 }
 
 class DevicesCompanion extends UpdateCompanion<Device> {
@@ -597,6 +637,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
   final Value<bool> trusted;
   final Value<DateTime?> lastSeen;
   final Value<DateTime> createdAt;
+  final Value<String> endpointSource;
   final Value<int> rowid;
   const DevicesCompanion({
     this.id = const Value.absent(),
@@ -612,6 +653,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     this.trusted = const Value.absent(),
     this.lastSeen = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.endpointSource = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DevicesCompanion.insert({
@@ -628,6 +670,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     this.trusted = const Value.absent(),
     this.lastSeen = const Value.absent(),
     required DateTime createdAt,
+    this.endpointSource = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        displayName = Value(displayName),
@@ -650,6 +693,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Expression<bool>? trusted,
     Expression<DateTime>? lastSeen,
     Expression<DateTime>? createdAt,
+    Expression<String>? endpointSource,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -666,6 +710,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       if (trusted != null) 'trusted': trusted,
       if (lastSeen != null) 'last_seen': lastSeen,
       if (createdAt != null) 'created_at': createdAt,
+      if (endpointSource != null) 'endpoint_source': endpointSource,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -684,6 +729,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Value<bool>? trusted,
     Value<DateTime?>? lastSeen,
     Value<DateTime>? createdAt,
+    Value<String>? endpointSource,
     Value<int>? rowid,
   }) {
     return DevicesCompanion(
@@ -700,6 +746,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       trusted: trusted ?? this.trusted,
       lastSeen: lastSeen ?? this.lastSeen,
       createdAt: createdAt ?? this.createdAt,
+      endpointSource: endpointSource ?? this.endpointSource,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -746,6 +793,9 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
+    if (endpointSource.present) {
+      map['endpoint_source'] = Variable<String>(endpointSource.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -768,6 +818,7 @@ class DevicesCompanion extends UpdateCompanion<Device> {
           ..write('trusted: $trusted, ')
           ..write('lastSeen: $lastSeen, ')
           ..write('createdAt: $createdAt, ')
+          ..write('endpointSource: $endpointSource, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1217,6 +1268,17 @@ class $ChatMessagesTable extends ChatMessages
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _relativePathMeta = const VerificationMeta(
+    'relativePath',
+  );
+  @override
+  late final GeneratedColumn<String> relativePath = GeneratedColumn<String>(
+    'relative_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -1242,6 +1304,7 @@ class $ChatMessagesTable extends ChatMessages
     mimeType,
     status,
     transferId,
+    relativePath,
     createdAt,
   ];
   @override
@@ -1343,6 +1406,15 @@ class $ChatMessagesTable extends ChatMessages
         transferId.isAcceptableOrUnknown(data['transfer_id']!, _transferIdMeta),
       );
     }
+    if (data.containsKey('relative_path')) {
+      context.handle(
+        _relativePathMeta,
+        relativePath.isAcceptableOrUnknown(
+          data['relative_path']!,
+          _relativePathMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -1408,6 +1480,10 @@ class $ChatMessagesTable extends ChatMessages
         DriftSqlType.string,
         data['${effectivePrefix}transfer_id'],
       ),
+      relativePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relative_path'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -1434,6 +1510,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
   final String? mimeType;
   final String status;
   final String? transferId;
+  final String? relativePath;
   final DateTime createdAt;
   const ChatMessage({
     required this.id,
@@ -1448,6 +1525,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     this.mimeType,
     required this.status,
     this.transferId,
+    this.relativePath,
     required this.createdAt,
   });
   @override
@@ -1477,6 +1555,9 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     if (!nullToAbsent || transferId != null) {
       map['transfer_id'] = Variable<String>(transferId);
     }
+    if (!nullToAbsent || relativePath != null) {
+      map['relative_path'] = Variable<String>(relativePath);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
   }
@@ -1505,6 +1586,9 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       transferId: transferId == null && nullToAbsent
           ? const Value.absent()
           : Value(transferId),
+      relativePath: relativePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(relativePath),
       createdAt: Value(createdAt),
     );
   }
@@ -1527,6 +1611,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       mimeType: serializer.fromJson<String?>(json['mimeType']),
       status: serializer.fromJson<String>(json['status']),
       transferId: serializer.fromJson<String?>(json['transferId']),
+      relativePath: serializer.fromJson<String?>(json['relativePath']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
   }
@@ -1546,6 +1631,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       'mimeType': serializer.toJson<String?>(mimeType),
       'status': serializer.toJson<String>(status),
       'transferId': serializer.toJson<String?>(transferId),
+      'relativePath': serializer.toJson<String?>(relativePath),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
   }
@@ -1563,6 +1649,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     Value<String?> mimeType = const Value.absent(),
     String? status,
     Value<String?> transferId = const Value.absent(),
+    Value<String?> relativePath = const Value.absent(),
     DateTime? createdAt,
   }) => ChatMessage(
     id: id ?? this.id,
@@ -1577,6 +1664,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     mimeType: mimeType.present ? mimeType.value : this.mimeType,
     status: status ?? this.status,
     transferId: transferId.present ? transferId.value : this.transferId,
+    relativePath: relativePath.present ? relativePath.value : this.relativePath,
     createdAt: createdAt ?? this.createdAt,
   );
   ChatMessage copyWithCompanion(ChatMessagesCompanion data) {
@@ -1599,6 +1687,9 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       transferId: data.transferId.present
           ? data.transferId.value
           : this.transferId,
+      relativePath: data.relativePath.present
+          ? data.relativePath.value
+          : this.relativePath,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -1618,6 +1709,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           ..write('mimeType: $mimeType, ')
           ..write('status: $status, ')
           ..write('transferId: $transferId, ')
+          ..write('relativePath: $relativePath, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -1637,6 +1729,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     mimeType,
     status,
     transferId,
+    relativePath,
     createdAt,
   );
   @override
@@ -1655,6 +1748,7 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           other.mimeType == this.mimeType &&
           other.status == this.status &&
           other.transferId == this.transferId &&
+          other.relativePath == this.relativePath &&
           other.createdAt == this.createdAt);
 }
 
@@ -1671,6 +1765,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
   final Value<String?> mimeType;
   final Value<String> status;
   final Value<String?> transferId;
+  final Value<String?> relativePath;
   final Value<DateTime> createdAt;
   final Value<int> rowid;
   const ChatMessagesCompanion({
@@ -1686,6 +1781,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     this.mimeType = const Value.absent(),
     this.status = const Value.absent(),
     this.transferId = const Value.absent(),
+    this.relativePath = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -1702,6 +1798,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     this.mimeType = const Value.absent(),
     required String status,
     this.transferId = const Value.absent(),
+    this.relativePath = const Value.absent(),
     required DateTime createdAt,
     this.rowid = const Value.absent(),
   }) : id = Value(id),
@@ -1724,6 +1821,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     Expression<String>? mimeType,
     Expression<String>? status,
     Expression<String>? transferId,
+    Expression<String>? relativePath,
     Expression<DateTime>? createdAt,
     Expression<int>? rowid,
   }) {
@@ -1740,6 +1838,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       if (mimeType != null) 'mime_type': mimeType,
       if (status != null) 'status': status,
       if (transferId != null) 'transfer_id': transferId,
+      if (relativePath != null) 'relative_path': relativePath,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -1758,6 +1857,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     Value<String?>? mimeType,
     Value<String>? status,
     Value<String?>? transferId,
+    Value<String?>? relativePath,
     Value<DateTime>? createdAt,
     Value<int>? rowid,
   }) {
@@ -1774,6 +1874,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       mimeType: mimeType ?? this.mimeType,
       status: status ?? this.status,
       transferId: transferId ?? this.transferId,
+      relativePath: relativePath ?? this.relativePath,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
     );
@@ -1818,6 +1919,9 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     if (transferId.present) {
       map['transfer_id'] = Variable<String>(transferId.value);
     }
+    if (relativePath.present) {
+      map['relative_path'] = Variable<String>(relativePath.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1842,6 +1946,7 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
           ..write('mimeType: $mimeType, ')
           ..write('status: $status, ')
           ..write('transferId: $transferId, ')
+          ..write('relativePath: $relativePath, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -1994,6 +2099,17 @@ class $TransfersTable extends Transfers
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _relativePathMeta = const VerificationMeta(
+    'relativePath',
+  );
+  @override
+  late final GeneratedColumn<String> relativePath = GeneratedColumn<String>(
+    'relative_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -2031,6 +2147,7 @@ class $TransfersTable extends Transfers
     status,
     receivedBytes,
     totalChunks,
+    relativePath,
     createdAt,
     updatedAt,
   ];
@@ -2142,6 +2259,15 @@ class $TransfersTable extends Transfers
         ),
       );
     }
+    if (data.containsKey('relative_path')) {
+      context.handle(
+        _relativePathMeta,
+        relativePath.isAcceptableOrUnknown(
+          data['relative_path']!,
+          _relativePathMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -2219,6 +2345,10 @@ class $TransfersTable extends Transfers
         DriftSqlType.int,
         data['${effectivePrefix}total_chunks'],
       )!,
+      relativePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relative_path'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -2250,6 +2380,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
   final String status;
   final int receivedBytes;
   final int totalChunks;
+  final String? relativePath;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Transfer({
@@ -2266,6 +2397,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     required this.status,
     required this.receivedBytes,
     required this.totalChunks,
+    this.relativePath,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -2295,6 +2427,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     map['status'] = Variable<String>(status);
     map['received_bytes'] = Variable<int>(receivedBytes);
     map['total_chunks'] = Variable<int>(totalChunks);
+    if (!nullToAbsent || relativePath != null) {
+      map['relative_path'] = Variable<String>(relativePath);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -2325,6 +2460,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       status: Value(status),
       receivedBytes: Value(receivedBytes),
       totalChunks: Value(totalChunks),
+      relativePath: relativePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(relativePath),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -2349,6 +2487,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       status: serializer.fromJson<String>(json['status']),
       receivedBytes: serializer.fromJson<int>(json['receivedBytes']),
       totalChunks: serializer.fromJson<int>(json['totalChunks']),
+      relativePath: serializer.fromJson<String?>(json['relativePath']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -2370,6 +2509,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       'status': serializer.toJson<String>(status),
       'receivedBytes': serializer.toJson<int>(receivedBytes),
       'totalChunks': serializer.toJson<int>(totalChunks),
+      'relativePath': serializer.toJson<String?>(relativePath),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -2389,6 +2529,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     String? status,
     int? receivedBytes,
     int? totalChunks,
+    Value<String?> relativePath = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Transfer(
@@ -2405,6 +2546,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     status: status ?? this.status,
     receivedBytes: receivedBytes ?? this.receivedBytes,
     totalChunks: totalChunks ?? this.totalChunks,
+    relativePath: relativePath.present ? relativePath.value : this.relativePath,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -2429,6 +2571,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       totalChunks: data.totalChunks.present
           ? data.totalChunks.value
           : this.totalChunks,
+      relativePath: data.relativePath.present
+          ? data.relativePath.value
+          : this.relativePath,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -2450,6 +2595,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           ..write('status: $status, ')
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
+          ..write('relativePath: $relativePath, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -2471,6 +2617,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     status,
     receivedBytes,
     totalChunks,
+    relativePath,
     createdAt,
     updatedAt,
   );
@@ -2491,6 +2638,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           other.status == this.status &&
           other.receivedBytes == this.receivedBytes &&
           other.totalChunks == this.totalChunks &&
+          other.relativePath == this.relativePath &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -2509,6 +2657,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
   final Value<String> status;
   final Value<int> receivedBytes;
   final Value<int> totalChunks;
+  final Value<String?> relativePath;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -2526,6 +2675,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.status = const Value.absent(),
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
+    this.relativePath = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -2544,6 +2694,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     required String status,
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
+    this.relativePath = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
@@ -2569,6 +2720,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Expression<String>? status,
     Expression<int>? receivedBytes,
     Expression<int>? totalChunks,
+    Expression<String>? relativePath,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
@@ -2587,6 +2739,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       if (status != null) 'status': status,
       if (receivedBytes != null) 'received_bytes': receivedBytes,
       if (totalChunks != null) 'total_chunks': totalChunks,
+      if (relativePath != null) 'relative_path': relativePath,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -2607,6 +2760,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Value<String>? status,
     Value<int>? receivedBytes,
     Value<int>? totalChunks,
+    Value<String?>? relativePath,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -2625,6 +2779,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       status: status ?? this.status,
       receivedBytes: receivedBytes ?? this.receivedBytes,
       totalChunks: totalChunks ?? this.totalChunks,
+      relativePath: relativePath ?? this.relativePath,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -2673,6 +2828,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     if (totalChunks.present) {
       map['total_chunks'] = Variable<int>(totalChunks.value);
     }
+    if (relativePath.present) {
+      map['relative_path'] = Variable<String>(relativePath.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -2701,6 +2859,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
           ..write('status: $status, ')
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
+          ..write('relativePath: $relativePath, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -2950,6 +3109,7 @@ typedef $$DevicesTableCreateCompanionBuilder =
       Value<bool> trusted,
       Value<DateTime?> lastSeen,
       required DateTime createdAt,
+      Value<String> endpointSource,
       Value<int> rowid,
     });
 typedef $$DevicesTableUpdateCompanionBuilder =
@@ -2967,6 +3127,7 @@ typedef $$DevicesTableUpdateCompanionBuilder =
       Value<bool> trusted,
       Value<DateTime?> lastSeen,
       Value<DateTime> createdAt,
+      Value<String> endpointSource,
       Value<int> rowid,
     });
 
@@ -3041,6 +3202,11 @@ class $$DevicesTableFilterComposer
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get endpointSource => $composableBuilder(
+    column: $table.endpointSource,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3118,6 +3284,11 @@ class $$DevicesTableOrderingComposer
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get endpointSource => $composableBuilder(
+    column: $table.endpointSource,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$DevicesTableAnnotationComposer
@@ -3179,6 +3350,11 @@ class $$DevicesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<String> get endpointSource => $composableBuilder(
+    column: $table.endpointSource,
+    builder: (column) => column,
+  );
 }
 
 class $$DevicesTableTableManager
@@ -3222,6 +3398,7 @@ class $$DevicesTableTableManager
                 Value<bool> trusted = const Value.absent(),
                 Value<DateTime?> lastSeen = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<String> endpointSource = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DevicesCompanion(
                 id: id,
@@ -3237,6 +3414,7 @@ class $$DevicesTableTableManager
                 trusted: trusted,
                 lastSeen: lastSeen,
                 createdAt: createdAt,
+                endpointSource: endpointSource,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3254,6 +3432,7 @@ class $$DevicesTableTableManager
                 Value<bool> trusted = const Value.absent(),
                 Value<DateTime?> lastSeen = const Value.absent(),
                 required DateTime createdAt,
+                Value<String> endpointSource = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DevicesCompanion.insert(
                 id: id,
@@ -3269,6 +3448,7 @@ class $$DevicesTableTableManager
                 trusted: trusted,
                 lastSeen: lastSeen,
                 createdAt: createdAt,
+                endpointSource: endpointSource,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -3490,6 +3670,7 @@ typedef $$ChatMessagesTableCreateCompanionBuilder =
       Value<String?> mimeType,
       required String status,
       Value<String?> transferId,
+      Value<String?> relativePath,
       required DateTime createdAt,
       Value<int> rowid,
     });
@@ -3507,6 +3688,7 @@ typedef $$ChatMessagesTableUpdateCompanionBuilder =
       Value<String?> mimeType,
       Value<String> status,
       Value<String?> transferId,
+      Value<String?> relativePath,
       Value<DateTime> createdAt,
       Value<int> rowid,
     });
@@ -3577,6 +3759,11 @@ class $$ChatMessagesTableFilterComposer
 
   ColumnFilters<String> get transferId => $composableBuilder(
     column: $table.transferId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3655,6 +3842,11 @@ class $$ChatMessagesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -3712,6 +3904,11 @@ class $$ChatMessagesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 }
@@ -3759,6 +3956,7 @@ class $$ChatMessagesTableTableManager
                 Value<String?> mimeType = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<String?> transferId = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ChatMessagesCompanion(
@@ -3774,6 +3972,7 @@ class $$ChatMessagesTableTableManager
                 mimeType: mimeType,
                 status: status,
                 transferId: transferId,
+                relativePath: relativePath,
                 createdAt: createdAt,
                 rowid: rowid,
               ),
@@ -3791,6 +3990,7 @@ class $$ChatMessagesTableTableManager
                 Value<String?> mimeType = const Value.absent(),
                 required String status,
                 Value<String?> transferId = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
                 required DateTime createdAt,
                 Value<int> rowid = const Value.absent(),
               }) => ChatMessagesCompanion.insert(
@@ -3806,6 +4006,7 @@ class $$ChatMessagesTableTableManager
                 mimeType: mimeType,
                 status: status,
                 transferId: transferId,
+                relativePath: relativePath,
                 createdAt: createdAt,
                 rowid: rowid,
               ),
@@ -3849,6 +4050,7 @@ typedef $$TransfersTableCreateCompanionBuilder =
       required String status,
       Value<int> receivedBytes,
       Value<int> totalChunks,
+      Value<String?> relativePath,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<int> rowid,
@@ -3868,6 +4070,7 @@ typedef $$TransfersTableUpdateCompanionBuilder =
       Value<String> status,
       Value<int> receivedBytes,
       Value<int> totalChunks,
+      Value<String?> relativePath,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -3944,6 +4147,11 @@ class $$TransfersTableFilterComposer
 
   ColumnFilters<int> get totalChunks => $composableBuilder(
     column: $table.totalChunks,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4032,6 +4240,11 @@ class $$TransfersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -4097,6 +4310,11 @@ class $$TransfersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -4145,6 +4363,7 @@ class $$TransfersTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -4162,6 +4381,7 @@ class $$TransfersTableTableManager
                 status: status,
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,
+                relativePath: relativePath,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -4181,6 +4401,7 @@ class $$TransfersTableTableManager
                 required String status,
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -4198,6 +4419,7 @@ class $$TransfersTableTableManager
                 status: status,
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,
+                relativePath: relativePath,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,

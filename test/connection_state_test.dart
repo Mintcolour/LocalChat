@@ -212,6 +212,7 @@ Device _device({DateTime? lastSeen, bool neverSeen = false}) {
     avatarSeed: 'abcdef0123456789',
     avatarColor: '#2563EB',
     trusted: true,
+    endpointSource: 'auto',
     lastSeen: neverSeen ? null : lastSeen ?? DateTime.now(),
     createdAt: DateTime.utc(2026),
   );

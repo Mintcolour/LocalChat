@@ -126,6 +126,7 @@ class TransportService {
         'pairing',
         'encrypted_chunks',
         encryptedStreamCapability,
+        folderCapability,
       ],
     });
   }
@@ -397,7 +398,25 @@ class TransportService {
     }
   }
 
-  Future<void> _sendFile(Device peer, File file) async {
+  /// 递归发送一个文件夹。entries 为 (绝对路径, 相对根目录的路径) 列表，
+  /// relative 已 POSIX 化并以根目录名开头（如 "mydir/sub/f.txt"）。
+  /// 始终在协议里携带 relative_path：支持 folders_v1 的对端按相对路径镜像落盘，
+  /// 旧版本对端会忽略该未知字段并按平铺文件名接收（行为不变）。
+  Future<void> sendFolder(
+    Device peer,
+    String rootName,
+    List<({String absolute, String relative})> entries,
+  ) async {
+    for (final entry in entries) {
+      final file = File(entry.absolute);
+      if (!await file.exists()) {
+        continue;
+      }
+      await _sendFile(peer, file, relativePath: entry.relative);
+    }
+  }
+
+  Future<void> _sendFile(Device peer, File file, {String? relativePath}) async {
     final currentPeer = await _freshPeer(peer);
     final length = await file.length();
     final transferId = _uuid.v4();
@@ -420,6 +439,7 @@ class TransportService {
             mimeType: Value(mimeType),
             status: 'sending',
             totalChunks: Value(totalChunks),
+            relativePath: Value(relativePath),
             createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
           ),
@@ -437,6 +457,7 @@ class TransportService {
         mimeType: Value(mimeType),
         status: 'sending',
         transferId: Value(transferId),
+        relativePath: Value(relativePath),
         createdAt: DateTime.now(),
       ),
     );
@@ -452,6 +473,7 @@ class TransportService {
           length,
           mimeType,
           totalChunks,
+          relativePath: relativePath,
         );
       } catch (error) {
         if (!_isConnectionError(error)) {
@@ -473,6 +495,7 @@ class TransportService {
           length,
           mimeType,
           totalChunks,
+          relativePath: relativePath,
         );
       }
       await _markTransferStatus(transferId, 'sent', length);
@@ -491,9 +514,10 @@ class TransportService {
     String name,
     int length,
     String? mimeType,
-    int totalChunks,
-  ) async {
-    await _postSecure(peer, '/v1/transfers', {
+    int totalChunks, {
+    String? relativePath,
+  }) async {
+    final startBody = <String, Object?>{
       'id': transferId,
       'file_name': name,
       'file_size': length,
@@ -501,7 +525,11 @@ class TransportService {
       'total_chunks': totalChunks,
       'chunk_size': encryptedStreamChunkSize,
       'stream_version': encryptedStreamVersion,
-    });
+    };
+    if (relativePath != null && relativePath.isNotEmpty) {
+      startBody['relative_path'] = relativePath;
+    }
+    await _postSecure(peer, '/v1/transfers', startBody);
     final freshPeer = await _freshPeer(peer);
     final usedStream = await _trySendEncryptedStream(
       freshPeer,
@@ -739,6 +767,7 @@ class TransportService {
       _withTrustedEnvelope(request, (peer, payload) async {
         final conversation = await _db.ensureConversation(peer);
         final at = DateTime.now();
+        final relativePath = _nullableString(payload['relative_path']);
         final file = await _fileStore.createReceiveFile(
           _string(payload['file_name'], 'received.bin'),
           conversationFolder: FileStore.conversationFolder(
@@ -746,6 +775,7 @@ class TransportService {
             peer.id,
           ),
           at: at,
+          relativePath: relativePath,
         );
         final id = _string(payload['id'], _uuid.v4());
         final fileName = _string(payload['file_name'], p.basename(file.path));
@@ -763,6 +793,7 @@ class TransportService {
                 mimeType: Value(_nullableString(payload['mime_type'])),
                 status: 'receiving',
                 totalChunks: Value(_int(payload['total_chunks'])),
+                relativePath: Value(relativePath),
                 createdAt: at,
                 updatedAt: at,
               ),
@@ -780,13 +811,18 @@ class TransportService {
             mimeType: Value(_nullableString(payload['mime_type'])),
             status: 'receiving',
             transferId: Value(id),
+            relativePath: Value(relativePath),
             createdAt: DateTime.now(),
           ),
         );
         _notifications.add(
           languageCode == 'en'
-              ? 'Received file from ${peer.displayName}: $fileName'
-              : '收到 ${peer.displayName} 的文件：$fileName',
+              ? relativePath != null
+                  ? 'Received ${peer.displayName}: $relativePath'
+                  : 'Received file from ${peer.displayName}: $fileName'
+              : relativePath != null
+                  ? '收到 ${peer.displayName}：$relativePath'
+                  : '收到 ${peer.displayName} 的文件：$fileName',
         );
         _updates.add(null);
         return _json({'ok': true, 'path': file.path});

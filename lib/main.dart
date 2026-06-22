@@ -109,55 +109,64 @@ class _LocalChatHomeState extends State<LocalChatHome> {
             );
           });
         }
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(controller.text.appTitle),
-            actions: [
-              IconButton(
-                tooltip: controller.text.rescan,
-                onPressed: controller.rescan,
-                icon: const Icon(Icons.travel_explore),
-              ),
-              IconButton(
-                tooltip: controller.text.settings,
-                onPressed: () => _showSettingsDialog(context, controller),
-                icon: const Icon(Icons.settings_outlined),
-              ),
-            ],
-          ),
-          body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final narrow = constraints.maxWidth < 820;
-                final devicePane = _DevicePane(controller: controller);
-                final chatPane = _ChatPane(
-                  controller: controller,
-                  textController: _textController,
-                  dragging: _dragging,
-                  onDragState: (value) => setState(() => _dragging = value),
-                  showHeader: !narrow,
-                );
-                if (narrow) {
-                  return controller.selectedDevice == null
-                      ? devicePane
-                      : Column(
-                          children: [
-                            _MobilePeerHeader(controller: controller),
-                            Expanded(child: chatPane),
-                          ],
-                        );
-                }
-                return Row(
-                  children: [
-                    SizedBox(width: 340, child: devicePane),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: chatPane),
-                  ],
-                );
-              },
+        final inConversation = controller.selectedDevice != null;
+        return PopScope(
+          canPop: !inConversation,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && controller.selectedDevice != null) {
+              controller.closeConversation();
+            }
+          },
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(controller.text.appTitle),
+              actions: [
+                IconButton(
+                  tooltip: controller.text.rescan,
+                  onPressed: controller.rescan,
+                  icon: const Icon(Icons.travel_explore),
+                ),
+                IconButton(
+                  tooltip: controller.text.settings,
+                  onPressed: () => _showSettingsDialog(context, controller),
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+              ],
             ),
+            body: SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < 820;
+                  final devicePane = _DevicePane(controller: controller);
+                  final chatPane = _ChatPane(
+                    controller: controller,
+                    textController: _textController,
+                    dragging: _dragging,
+                    onDragState: (value) => setState(() => _dragging = value),
+                    showHeader: !narrow,
+                  );
+                  if (narrow) {
+                    return controller.selectedDevice == null
+                        ? devicePane
+                        : Column(
+                            children: [
+                              _MobilePeerHeader(controller: controller),
+                              Expanded(child: chatPane),
+                            ],
+                          );
+                  }
+                  return Row(
+                    children: [
+                      SizedBox(width: 340, child: devicePane),
+                      const VerticalDivider(width: 1),
+                      Expanded(child: chatPane),
+                    ],
+                  );
+                },
+              ),
+            ),
+            bottomNavigationBar: _StatusBar(controller: controller),
           ),
-          bottomNavigationBar: _StatusBar(controller: controller),
         );
       },
     );

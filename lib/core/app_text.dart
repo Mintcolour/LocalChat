@@ -7,6 +7,7 @@ class AppText {
   final String languageCode;
 
   bool get en => languageCode == 'en';
+  String get retry => en ? 'Retry' : '重试';
 
   String get appTitle => 'LocalChat';
   String get rescan => en ? 'Rescan' : '重新搜索';
@@ -44,6 +45,10 @@ class AppText {
   String get deviceNameVisible =>
       en ? 'Device name visible to others' : '别人看到的设备名称';
   String get language => en ? 'Language' : '语言';
+  String get appearance => en ? 'Appearance' : '外观模式';
+  String get themeSystem => en ? 'System' : '跟随系统';
+  String get themeLight => en ? 'Light' : '浅色';
+  String get themeDark => en ? 'Dark' : '深色';
   String get chinese => '中文';
   String get english => 'English';
   String get autoCopyReceivedText =>

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,32 @@ import 'package:localchat/services/identity_service.dart';
 import 'package:localchat/services/security_service.dart';
 import 'package:localchat/services/transport_service.dart';
 
+class _TestFileStore extends FileStore {
+  _TestFileStore(this.root);
+
+  final Directory root;
+
+  @override
+  Future<Directory> receiveDirectory() async {
+    final dir = Directory('${root.path}${Platform.pathSeparator}incoming');
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  @override
+  Future<SavedFile> saveToDownloads({
+    required String sourcePath,
+    required String fileName,
+    String? mimeType,
+    required String conversationFolder,
+    required DateTime at,
+    String? relativePath,
+    bool moveSource = false,
+  }) async {
+    return SavedFile(path: sourcePath, actualFileName: fileName);
+  }
+}
+
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
@@ -15,23 +43,27 @@ void main() {
     final dbB = AppDatabase(NativeDatabase.memory());
     final identityA = IdentityService(dbA);
     final identityB = IdentityService(dbB);
+    final rootA = await Directory.systemTemp.createTemp('localchat-retry-a');
+    final rootB = await Directory.systemTemp.createTemp('localchat-retry-b');
     final transportA = TransportService(
       dbA,
       identityA,
       SecurityService(identityA),
-      FileStore(),
+      _TestFileStore(rootA),
     );
     final transportB = TransportService(
       dbB,
       identityB,
       SecurityService(identityB),
-      FileStore(),
+      _TestFileStore(rootB),
     );
     addTearDown(() async {
       await transportA.stop();
       await transportB.stop();
       await dbA.close();
       await dbB.close();
+      await rootA.delete(recursive: true);
+      await rootB.delete(recursive: true);
     });
 
     final localA = await identityA.load();
@@ -72,5 +104,57 @@ void main() {
 
     expect((await dbA.getDevice(localB.deviceId))!.trusted, isTrue);
     expect((await dbB.getDevice(localA.deviceId))!.trusted, isTrue);
+    final trustedPeerB = (await dbA.getDevice(localB.deviceId))!;
+    final conversationA = await dbA.ensureConversation(trustedPeerB);
+    final source = File('${rootA.path}${Platform.pathSeparator}retry.txt');
+    await source.writeAsString('retry payload');
+    final now = DateTime.now();
+    await dbA
+        .into(dbA.transfers)
+        .insert(
+          TransfersCompanion.insert(
+            id: 'failed-transfer',
+            peerDeviceId: trustedPeerB.id,
+            direction: 'out',
+            fileName: 'retry.txt',
+            filePath: Value(source.path),
+            fileSize: await source.length(),
+            mimeType: const Value('text/plain'),
+            status: 'failed',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    await dbA.addMessage(
+      ChatMessagesCompanion.insert(
+        id: 'failed-message',
+        conversationId: conversationA.id,
+        peerDeviceId: trustedPeerB.id,
+        direction: 'out',
+        kind: 'file',
+        fileName: const Value('retry.txt'),
+        filePath: Value(source.path),
+        fileSize: Value(await source.length()),
+        mimeType: const Value('text/plain'),
+        status: 'failed',
+        transferId: const Value('failed-transfer'),
+        createdAt: now,
+      ),
+    );
+    final failedMessage = (await dbA.listMessages(
+      conversationA.id,
+    )).singleWhere((message) => message.id == 'failed-message');
+    final failedTransfer = (await dbA.listTransfersByIds([
+      'failed-transfer',
+    ])).single;
+
+    await transportA.retryFile(trustedPeerB, failedMessage, failedTransfer);
+
+    final retriedMessage = (await dbA.listMessages(
+      conversationA.id,
+    )).singleWhere((message) => message.id == 'failed-message');
+    expect(retriedMessage.status, 'sent');
+    expect(retriedMessage.transferId, isNot('failed-transfer'));
+    expect(await dbA.listTransfersByIds(['failed-transfer']), isEmpty);
   });
 }

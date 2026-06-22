@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:localchat/app/app_controller.dart';
 import 'package:localchat/core/device_profile.dart';
 import 'package:localchat/core/file_types.dart';
 import 'package:localchat/data/app_database.dart';
@@ -146,4 +147,15 @@ void main() {
       );
     },
   );
+
+  test('theme mode preference is persisted', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final controller = AppController(database: db);
+    addTearDown(controller.dispose);
+
+    await controller.setThemeModeCode('dark');
+
+    expect(controller.themeModeCode, 'dark');
+    expect(await db.getSetting('theme_mode'), 'dark');
+  });
 }

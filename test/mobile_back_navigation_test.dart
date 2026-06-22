@@ -6,6 +6,21 @@ import 'package:localchat/data/app_database.dart';
 import 'package:localchat/main.dart';
 
 void main() {
+  testWidgets('dark theme is applied from the controller preference', (
+    tester,
+  ) async {
+    final controller = AppController(
+      database: AppDatabase(NativeDatabase.memory()),
+    );
+    addTearDown(controller.dispose);
+    controller.themeModeCode = 'dark';
+
+    await tester.pumpWidget(LocalChatApp(controller: controller));
+
+    final context = tester.element(find.byType(Scaffold));
+    expect(Theme.of(context).brightness, Brightness.dark);
+  });
+
   testWidgets('system back returns from a mobile chat to the device list', (
     tester,
   ) async {

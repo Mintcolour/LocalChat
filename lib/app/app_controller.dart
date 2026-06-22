@@ -22,6 +22,7 @@ import '../services/window_service.dart';
 
 const _autoCopyReceivedTextKey = 'auto_copy_received_text';
 const _languageCodeKey = 'language_code';
+const _themeModeKey = 'theme_mode';
 const _trayEnabledKey = 'tray_enabled';
 const _autostartEnabledKey = 'autostart_enabled';
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
@@ -70,6 +71,7 @@ class AppController extends ChangeNotifier {
   bool trayEnabled = true;
   bool autostartEnabled = false;
   String languageCode = 'zh';
+  String themeModeCode = 'system';
   String status = '正在启动 LocalChat...';
   String? lastError;
   String? notificationText;
@@ -98,6 +100,11 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       languageCode = await db.getSetting(_languageCodeKey) ?? 'zh';
+      final storedThemeMode = await db.getSetting(_themeModeKey);
+      themeModeCode =
+          const {'system', 'light', 'dark'}.contains(storedThemeMode)
+          ? storedThemeMode!
+          : 'system';
       autoCopyReceivedText =
           await db.getSetting(_autoCopyReceivedTextKey) != 'false';
       transportService.autoCopyReceivedText = autoCopyReceivedText;
@@ -244,6 +251,14 @@ class AppController extends ChangeNotifier {
     transportService.languageCode = value;
     await db.setSetting(_languageCodeKey, value);
     status = value == 'en' ? 'Language set to English' : '语言已切换为中文';
+    notifyListeners();
+  }
+
+  Future<void> setThemeModeCode(String value) async {
+    if (!const {'system', 'light', 'dark'}.contains(value)) return;
+    themeModeCode = value;
+    await db.setSetting(_themeModeKey, value);
+    status = languageCode == 'en' ? 'Appearance updated' : '外观模式已更新';
     notifyListeners();
   }
 
@@ -613,6 +628,43 @@ class AppController extends ChangeNotifier {
       await Process.run('explorer.exe', [folder]);
     } else {
       await OpenFilex.open(folder);
+    }
+  }
+
+  Future<void> retryMessage(ChatMessage message) async {
+    if (message.direction != 'out' || message.status != 'failed') return;
+    final peer = await db.getDevice(message.peerDeviceId);
+    if (peer == null || !peer.trusted) {
+      status = languageCode == 'en'
+          ? 'The peer is no longer trusted'
+          : '对方设备已不在信任列表中';
+      notifyListeners();
+      return;
+    }
+    busy = true;
+    lastError = null;
+    status = languageCode == 'en' ? 'Retrying...' : '正在重试发送…';
+    notifyListeners();
+    try {
+      if (message.kind == 'file') {
+        final transferId = message.transferId;
+        if (transferId == null) throw StateError('Transfer record is missing');
+        final cached = transfersById[transferId];
+        final transfer =
+            cached ?? (await db.listTransfersByIds([transferId])).firstOrNull;
+        if (transfer == null) throw StateError('Transfer record is missing');
+        await transportService.retryFile(peer, message, transfer);
+      } else {
+        await transportService.retryText(peer, message);
+      }
+      status = languageCode == 'en' ? 'Retry succeeded' : '重新发送成功';
+    } catch (error) {
+      lastError = '$error';
+      status = languageCode == 'en' ? 'Retry failed' : '重新发送失败';
+    } finally {
+      await refresh();
+      busy = false;
+      notifyListeners();
     }
   }
 

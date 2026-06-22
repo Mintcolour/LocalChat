@@ -28,14 +28,32 @@ class LocalChatApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'LocalChat',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
-        useMaterial3: true,
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'LocalChat',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF2563EB),
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF2563EB),
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        themeMode: switch (controller.themeModeCode) {
+          'light' => ThemeMode.light,
+          'dark' => ThemeMode.dark,
+          _ => ThemeMode.system,
+        },
+        home: LocalChatHome(controller: controller),
       ),
-      home: LocalChatHome(controller: controller),
     );
   }
 }
@@ -677,6 +695,33 @@ Future<void> _showSettingsDialog(
                   },
                 ),
               ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(controller.text.appearance),
+                trailing: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment(
+                      value: 'system',
+                      tooltip: controller.text.themeSystem,
+                      icon: const Icon(Icons.brightness_auto_outlined),
+                    ),
+                    ButtonSegment(
+                      value: 'light',
+                      tooltip: controller.text.themeLight,
+                      icon: const Icon(Icons.light_mode_outlined),
+                    ),
+                    ButtonSegment(
+                      value: 'dark',
+                      tooltip: controller.text.themeDark,
+                      icon: const Icon(Icons.dark_mode_outlined),
+                    ),
+                  ],
+                  selected: {controller.themeModeCode},
+                  onSelectionChanged: (values) {
+                    controller.setThemeModeCode(values.single);
+                  },
+                ),
+              ),
               if (Platform.isWindows) ...[
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1058,6 +1103,14 @@ class _MessageBubble extends StatelessWidget {
                 )
               : _TextMessage(message),
         ),
+        if (outgoing && message.status == 'failed' && message.kind != 'file')
+          TextButton.icon(
+            onPressed: controller.busy
+                ? null
+                : () => controller.retryMessage(message),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(controller.text.retry),
+          ),
         const SizedBox(height: 3),
         Text(
           '${controller.text.messageStatus(message.status)} ${formatMessageTimestamp(message.createdAt)}',
@@ -1126,6 +1179,10 @@ class _FileMessage extends StatelessWidget {
         ? null
         : transfer?.savedPath ?? message.filePath;
     final canRename = controller.canRenameMessageFile(message, transfer);
+    final canRetry =
+        message.direction == 'out' &&
+        message.status == 'failed' &&
+        transfer != null;
     final showProgress =
         progress != null &&
         progress < 1 &&
@@ -1135,11 +1192,11 @@ class _FileMessage extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _FilePreview(message: message, mimeType: mimeType),
             const SizedBox(width: 10),
-            Flexible(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1147,8 +1204,6 @@ class _FileMessage extends StatelessWidget {
                     message.relativePath ??
                         message.fileName ??
                         controller.text.file,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                   if (fileSize > 0)
                     Text(
@@ -1163,40 +1218,6 @@ class _FileMessage extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
-              tooltip: controller.text.open,
-              onPressed: openTarget == null
-                  ? null
-                  : () => controller.openPath(openTarget),
-              icon: const Icon(Icons.open_in_new),
-            ),
-            IconButton(
-              tooltip: controller.text.openFolder,
-              onPressed: folderTarget == null
-                  ? null
-                  : () => controller.openFolder(folderTarget),
-              icon: const Icon(Icons.folder_open),
-            ),
-            if (canRename)
-              IconButton(
-                tooltip: controller.text.renameFile,
-                onPressed: controller.busy
-                    ? null
-                    : () => _showRenameFileDialog(
-                        context,
-                        controller,
-                        message,
-                        transfer!,
-                      ),
-                icon: const Icon(Icons.drive_file_rename_outline),
-              ),
-            IconButton(
-              tooltip: controller.text.saveLocal,
-              onPressed: saved
-                  ? null
-                  : () => controller.saveMessageFile(message),
-              icon: const Icon(Icons.save_alt),
-            ),
           ],
         ),
         if (showProgress) ...[
@@ -1208,6 +1229,59 @@ class _FileMessage extends StatelessWidget {
             style: Theme.of(context).textTheme.labelSmall,
           ),
         ],
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Wrap(
+            spacing: 2,
+            runSpacing: 2,
+            alignment: WrapAlignment.end,
+            children: [
+              if (canRetry)
+                IconButton(
+                  tooltip: controller.text.retry,
+                  onPressed: controller.busy
+                      ? null
+                      : () => controller.retryMessage(message),
+                  icon: const Icon(Icons.refresh),
+                ),
+              IconButton(
+                tooltip: controller.text.open,
+                onPressed: openTarget == null
+                    ? null
+                    : () => controller.openPath(openTarget),
+                icon: const Icon(Icons.open_in_new),
+              ),
+              IconButton(
+                tooltip: controller.text.openFolder,
+                onPressed: folderTarget == null
+                    ? null
+                    : () => controller.openFolder(folderTarget),
+                icon: const Icon(Icons.folder_open),
+              ),
+              if (canRename)
+                IconButton(
+                  tooltip: controller.text.renameFile,
+                  onPressed: controller.busy
+                      ? null
+                      : () => _showRenameFileDialog(
+                          context,
+                          controller,
+                          message,
+                          transfer!,
+                        ),
+                  icon: const Icon(Icons.drive_file_rename_outline),
+                ),
+              IconButton(
+                tooltip: controller.text.saveLocal,
+                onPressed: saved
+                    ? null
+                    : () => controller.saveMessageFile(message),
+                icon: const Icon(Icons.save_alt),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

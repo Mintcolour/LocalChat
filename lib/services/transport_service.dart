@@ -430,6 +430,114 @@ class TransportService {
     }
   }
 
+  Future<void> retryText(Device peer, ChatMessage message) async {
+    final body = message.body;
+    if (message.direction != 'out' || body == null || body.isEmpty) return;
+    var targetPeer = await _freshPeer(peer);
+    await _setMessageStatus(message.id, 'sending');
+    _updates.add(null);
+    try {
+      try {
+        await _postSecure(targetPeer, '/v1/messages', {
+          'id': message.id,
+          'kind': 'text',
+          'body': body,
+          'created_at': message.createdAt.toIso8601String(),
+        });
+      } catch (error) {
+        if (!_isConnectionError(error)) rethrow;
+        await _db.markDeviceOffline(targetPeer.id);
+        _updates.add(null);
+        final resolved = await reconnectPeer?.call(targetPeer.id);
+        if (resolved == null) rethrow;
+        targetPeer = resolved;
+        await _postSecure(targetPeer, '/v1/messages', {
+          'id': message.id,
+          'kind': 'text',
+          'body': body,
+          'created_at': message.createdAt.toIso8601String(),
+        });
+      }
+      await _setMessageStatus(message.id, 'sent');
+    } catch (_) {
+      await _setMessageStatus(message.id, 'failed');
+      rethrow;
+    } finally {
+      _updates.add(null);
+    }
+  }
+
+  Future<void> retryFile(
+    Device peer,
+    ChatMessage message,
+    Transfer transfer,
+  ) async {
+    final path = transfer.filePath ?? message.filePath;
+    if (message.direction != 'out' || path == null || path.isEmpty) return;
+    final file = File(path);
+    if (!await file.exists()) {
+      throw FileSystemException('Source file no longer exists', path);
+    }
+    final currentPeer = await _freshPeer(peer);
+    final length = await file.length();
+    final retryTransferId = _uuid.v4();
+    final totalChunks = length == 0
+        ? 1
+        : (length + encryptedStreamChunkSize - 1) ~/ encryptedStreamChunkSize;
+    final name = transfer.fileName;
+    final mimeType = transfer.mimeType ?? lookupMimeType(path);
+    await _db.transaction(() async {
+      await _db
+          .into(_db.transfers)
+          .insert(
+            TransfersCompanion.insert(
+              id: retryTransferId,
+              peerDeviceId: currentPeer.id,
+              direction: 'out',
+              fileName: name,
+              fileSize: length,
+              filePath: Value(path),
+              mimeType: Value(mimeType),
+              status: 'sending',
+              totalChunks: Value(totalChunks),
+              relativePath: Value(transfer.relativePath),
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            ),
+          );
+      await (_db.update(
+        _db.chatMessages,
+      )..where((tbl) => tbl.id.equals(message.id))).write(
+        ChatMessagesCompanion(
+          status: const Value('sending'),
+          transferId: Value(retryTransferId),
+          filePath: Value(path),
+          fileSize: Value(length),
+        ),
+      );
+      await (_db.delete(
+        _db.transfers,
+      )..where((tbl) => tbl.id.equals(transfer.id))).go();
+    });
+    _updates.add(null);
+    await _transmitFile(
+      currentPeer,
+      file,
+      retryTransferId,
+      name,
+      length,
+      mimeType,
+      totalChunks,
+      relativePath: transfer.relativePath,
+    );
+  }
+
+  Future<void> _setMessageStatus(String messageId, String status) async {
+    await (_db.update(_db.chatMessages)
+          ..where((tbl) => tbl.id.equals(messageId)))
+        .write(ChatMessagesCompanion(status: Value(status)));
+  }
+
   Future<void> sendFiles(Device peer, List<String> paths) async {
     for (final path in paths) {
       final file = File(path);
@@ -504,8 +612,30 @@ class TransportService {
       ),
     );
     _updates.add(null);
+    await _transmitFile(
+      currentPeer,
+      file,
+      transferId,
+      name,
+      length,
+      mimeType,
+      totalChunks,
+      relativePath: relativePath,
+    );
+  }
+
+  Future<void> _transmitFile(
+    Device peer,
+    File file,
+    String transferId,
+    String name,
+    int length,
+    String? mimeType,
+    int totalChunks, {
+    String? relativePath,
+  }) async {
     try {
-      var targetPeer = currentPeer;
+      var targetPeer = peer;
       try {
         await _sendFileAttempt(
           targetPeer,
@@ -518,15 +648,11 @@ class TransportService {
           relativePath: relativePath,
         );
       } catch (error) {
-        if (!_isConnectionError(error)) {
-          rethrow;
-        }
+        if (!_isConnectionError(error)) rethrow;
         await _db.markDeviceOffline(targetPeer.id);
         _updates.add(null);
         final resolved = await reconnectPeer?.call(targetPeer.id);
-        if (resolved == null) {
-          rethrow;
-        }
+        if (resolved == null) rethrow;
         targetPeer = resolved;
         await _markTransferProgress(transferId, 0, force: true);
         await _sendFileAttempt(

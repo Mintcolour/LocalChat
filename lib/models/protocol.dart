@@ -11,6 +11,10 @@ const encryptedStreamCapability = 'encrypted_stream_v2';
 // 文件夹递归传输能力：对端在 /v1/transfers start 请求里携带 relative_path 字段，
 // 接收端按相对路径镜像落盘。旧版本不广播此能力，发送时回退为纯平铺。
 const folderCapability = 'folders_v1';
+// 主动取消传输能力：双方都广播此能力时，发送方可调用
+// POST /v1/transfers/{id}/cancel 请求对端中断接收中的流。旧版本不广播此能力，
+// 发送方在尝试主动取消前必须检查对端能力，否则禁用取消并提示。
+const transferCancelCapability = 'transfer_cancel_v1';
 
 enum PeerPresence { trusted, discovered }
 
@@ -96,6 +100,7 @@ class DiscoveredPeer {
       'encrypted_chunks',
       encryptedStreamCapability,
       folderCapability,
+      transferCancelCapability,
     ],
   });
 

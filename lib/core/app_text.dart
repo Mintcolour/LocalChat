@@ -109,6 +109,37 @@ class AppText {
   String get peerHost => en ? 'Peer IP / host' : '对方 IP / 主机';
   String get peerPort => en ? 'Port' : '端口';
   String get add => en ? 'Add' : '添加';
+  String get transferCenter => en ? 'Transfer center' : '传输中心';
+  String get transferCenterSubtitle => en
+      ? 'Track and manage file transfers'
+      : '查看和管理文件传输';
+  String get transfersActive => en ? 'In progress' : '进行中';
+  String get transfersCompleted => en ? 'Completed' : '已完成';
+  String get transfersFailed => en ? 'Failed / canceled' : '失败 / 已取消';
+  String get noTransfers => en
+      ? 'No transfers yet.'
+      : '还没有传输记录。';
+  String get cancelTransfer => en ? 'Cancel transfer' : '取消传输';
+  String get cancelGroup => en ? 'Cancel group' : '取消整组';
+  String get retryTransfer => en ? 'Retry' : '重试';
+  String transferEta(int seconds) => en ? '~${seconds}s left' : '约 ${seconds}s 后完成';
+  String transferSpeed(double bytesPerSecond) =>
+      en ? '${_formatBytes(bytesPerSecond)}/s' : '${_formatBytes(bytesPerSecond)}/秒';
+  String get transferCanceledHint => en
+      ? 'The peer version does not support canceling in-progress transfers.'
+      : '对端版本不支持取消进行中的传输。';
+
+  String _formatBytes(double bytes) {
+    if (bytes < 1024) return '${bytes.toStringAsFixed(0)} B';
+    const units = ['KB', 'MB', 'GB'];
+    var value = bytes / 1024;
+    var i = 0;
+    while (value >= 1024 && i < units.length - 1) {
+      value /= 1024;
+      i++;
+    }
+    return '${value.toStringAsFixed(value >= 10 ? 1 : 2)} ${units[i]}';
+  }
 
   String peerStatus(Device device, {DateTime? now}) {
     if (!device.trusted) return en ? 'Unpaired' : '未配对';

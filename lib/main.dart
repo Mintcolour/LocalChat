@@ -13,6 +13,7 @@ import 'data/app_database.dart';
 import 'models/protocol.dart';
 import 'services/file_store.dart';
 import 'ui/attachment_preview.dart';
+import 'ui/transfer_center_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -139,6 +140,16 @@ class _LocalChatHomeState extends State<LocalChatHome> {
             appBar: AppBar(
               title: Text(controller.text.appTitle),
               actions: [
+                IconButton(
+                  tooltip: controller.text.transferCenter,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          TransferCenterPage(controller: controller),
+                    ),
+                  ),
+                  icon: const Icon(Icons.swap_vert),
+                ),
                 IconButton(
                   tooltip: controller.text.rescan,
                   onPressed: controller.rescan,
@@ -1228,6 +1239,10 @@ class _FileMessage extends StatelessWidget {
         progress != null &&
         progress < 1 &&
         (message.status == 'sending' || message.status == 'receiving');
+    final isQueued = message.status == 'queued';
+    final isTerminalFailed = message.status == 'failed' ||
+        message.status == 'canceled' ||
+        message.status == 'interrupted';
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1256,6 +1271,15 @@ class _FileMessage extends StatelessWidget {
                       controller.text.savedLocal,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                  if (isQueued || isTerminalFailed)
+                    Text(
+                      messageStatusLabel(message.status),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: isTerminalFailed
+                                ? Theme.of(context).colorScheme.error
+                                : null,
+                          ),
+                    ),
                 ],
               ),
             ),
@@ -1269,6 +1293,10 @@ class _FileMessage extends StatelessWidget {
             '${formatBytes(receivedBytes)} / ${formatBytes(fileSize)} · ${(progress * 100).toStringAsFixed(1)}%',
             style: Theme.of(context).textTheme.labelSmall,
           ),
+        ],
+        if (isQueued) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(),
         ],
         const SizedBox(height: 4),
         Align(

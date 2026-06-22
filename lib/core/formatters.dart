@@ -53,11 +53,14 @@ String formatMessageTimestamp(DateTime value) {
 
 String messageStatusLabel(String status) {
   return switch (status) {
+    'queued' => '排队中',
     'sending' => '发送中',
     'sent' => '已发送',
     'failed' => '发送失败',
     'receiving' => '接收中',
     'received' => '已接收',
+    'canceled' => '已取消',
+    'interrupted' => '已中断',
     _ => status,
   };
 }

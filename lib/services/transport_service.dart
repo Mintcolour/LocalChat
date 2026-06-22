@@ -19,6 +19,7 @@ import '../core/formatters.dart';
 import '../core/device_profile.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
+import '../models/transfer_views.dart';
 import 'file_store.dart';
 import 'identity_service.dart';
 import 'security_service.dart';
@@ -26,6 +27,12 @@ import 'security_service.dart';
 const _streamFrameMagic = 0x4C434632; // LCF2
 const _streamFrameHeaderLength = 24;
 const _progressPersistInterval = Duration(milliseconds: 300);
+const _speedSampleInterval = Duration(milliseconds: 500);
+
+/// 出站传输被用户取消时抛出，用于在传输链路中中断流生成与 dio 请求。
+class _OutboundCancelled implements Exception {
+  const _OutboundCancelled();
+}
 
 class TransportService {
   TransportService(
@@ -52,6 +59,14 @@ class TransportService {
   final Map<String, Completer<bool>> _pendingPairApprovals = {};
   final Map<String, DateTime> _lastProgressPersistedAt = {};
   final Map<String, int> _lastProgressBytes = {};
+  // 出站单活动任务队列：同一时刻只跑一个出站传输，其余排队等待。
+  final List<_OutboundTask> _outboundQueue = [];
+  _OutboundTask? _activeOutbound;
+  bool _pumping = false;
+  // 实时传输统计（发送字节数与瞬时速度），仅存内存，避免高频写库。
+  final Map<String, _LiveTransferStat> _liveStats = {};
+  // 正在接收的入站传输取消信号：transferId → 取消标志，供对端 cancel 接口触发。
+  final Map<String, _InboundCancel> _inboundCancels = {};
   HttpServer? _server;
   int _port = 0;
   Future<Device?> Function(String deviceId)? reconnectPeer;
@@ -65,6 +80,7 @@ class TransportService {
 
   Future<int> start() async {
     if (_server != null) return _port;
+    await _markStaleTransfersInterrupted();
     final router = Router()
       ..get('/v1/hello', _hello)
       ..post('/v1/pair/request', _pairRequest)
@@ -73,7 +89,8 @@ class TransportService {
       ..post('/v1/transfers', _receiveTransferStart)
       ..post('/v1/transfers/<id>/stream', _receiveTransferStream)
       ..put('/v1/transfers/<id>/chunks/<index>', _receiveTransferChunk)
-      ..post('/v1/transfers/<id>/complete', _receiveTransferComplete);
+      ..post('/v1/transfers/<id>/complete', _receiveTransferComplete)
+      ..post('/v1/transfers/<id>/cancel', _receiveTransferCancel);
     final handler = const Pipeline()
         .addMiddleware(logRequests())
         .addHandler(router.call);
@@ -108,6 +125,26 @@ class TransportService {
     }
   }
 
+  /// 应用重启时把遗留的 sending/receiving 传输标记为 interrupted，允许用户重新发送
+  /// 或在传输中心查看。避免重启后这些记录永远卡在中间态（计划 P1）。
+  Future<void> _markStaleTransfersInterrupted() async {
+    await (_db.update(_db.transfers)
+          ..where((tbl) => tbl.status.isIn(const ['sending', 'receiving'])))
+        .write(
+          TransfersCompanion(
+            status: const Value('interrupted'),
+            errorCode: const Value('interrupted'),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+    await (_db.update(_db.chatMessages)
+          ..where((tbl) => tbl.transferId.isNotNull())
+          ..where(
+            (tbl) => tbl.status.isIn(const ['sending', 'receiving']),
+          ))
+        .write(const ChatMessagesCompanion(status: Value('interrupted')));
+  }
+
   Future<Response> _hello(Request request) async {
     final identity = _identityService.identity;
     return _json({
@@ -129,6 +166,7 @@ class TransportService {
         'encrypted_chunks',
         encryptedStreamCapability,
         folderCapability,
+        transferCancelCapability,
       ],
     });
   }
@@ -248,6 +286,7 @@ class TransportService {
         'encrypted_chunks',
         encryptedStreamCapability,
         folderCapability,
+        transferCancelCapability,
       ],
     });
   }
@@ -604,16 +643,25 @@ class TransportService {
       )..where((tbl) => tbl.id.equals(transfer.id))).go();
     });
     _updates.add(null);
-    await _transmitFile(
-      currentPeer,
-      file,
-      retryTransferId,
-      name,
-      length,
-      mimeType,
-      totalChunks,
-      relativePath: transfer.relativePath,
-    );
+    try {
+      await _transmitFile(
+        currentPeer,
+        file,
+        retryTransferId,
+        name,
+        length,
+        mimeType,
+        totalChunks,
+        relativePath: transfer.relativePath,
+      );
+      await _markTransferStatus(retryTransferId, 'sent', length);
+    } catch (error) {
+      final code = error is AppFailure
+          ? error.code
+          : (_isConnectionError(error) ? 'connection_lost' : 'unknown');
+      await _markTransferFailed(retryTransferId, code);
+      rethrow;
+    }
   }
 
   Future<void> _setMessageStatus(String messageId, String status) async {
@@ -623,12 +671,9 @@ class TransportService {
   }
 
   Future<void> sendFiles(Device peer, List<String> paths) async {
+    final groupId = _uuid.v4();
     for (final path in paths) {
-      final file = File(path);
-      if (!await file.exists()) {
-        continue;
-      }
-      await _sendFile(peer, file);
+      await _enqueueFile(peer, File(path), groupId: groupId);
     }
   }
 
@@ -641,16 +686,26 @@ class TransportService {
     String rootName,
     List<({String absolute, String relative})> entries,
   ) async {
+    final groupId = _uuid.v4();
     for (final entry in entries) {
-      final file = File(entry.absolute);
-      if (!await file.exists()) {
-        continue;
-      }
-      await _sendFile(peer, file, relativePath: entry.relative);
+      await _enqueueFile(
+        peer,
+        File(entry.absolute),
+        groupId: groupId,
+        relativePath: entry.relative,
+      );
     }
   }
 
-  Future<void> _sendFile(Device peer, File file, {String? relativePath}) async {
+  /// 把单个文件入队为排队传输（status='queued'），立即返回，不阻塞调用方。
+  /// 队列单活动串行执行，支持取消排队任务与当前活动任务。
+  Future<void> _enqueueFile(
+    Device peer,
+    File file, {
+    required String groupId,
+    String? relativePath,
+  }) async {
+    if (!await file.exists()) return;
     final currentPeer = await _freshPeer(peer);
     _requireIdentityUnchanged(currentPeer);
     final length = await file.length();
@@ -672,9 +727,10 @@ class TransportService {
             fileSize: length,
             filePath: Value(file.path),
             mimeType: Value(mimeType),
-            status: 'sending',
+            status: 'queued',
             totalChunks: Value(totalChunks),
             relativePath: Value(relativePath),
+            groupId: Value(groupId),
             createdAt: DateTime.now(),
             updatedAt: DateTime.now(),
           ),
@@ -690,23 +746,145 @@ class TransportService {
         filePath: Value(file.path),
         fileSize: Value(length),
         mimeType: Value(mimeType),
-        status: 'sending',
+        status: 'queued',
         transferId: Value(transferId),
         relativePath: Value(relativePath),
         createdAt: DateTime.now(),
       ),
     );
-    _updates.add(null);
-    await _transmitFile(
-      currentPeer,
-      file,
-      transferId,
-      name,
-      length,
-      mimeType,
-      totalChunks,
-      relativePath: relativePath,
+    _liveStats[transferId] = _LiveTransferStat(totalBytes: length);
+    _outboundQueue.add(
+      _OutboundTask(
+        transferId: transferId,
+        peerId: currentPeer.id,
+        file: file,
+        name: name,
+        length: length,
+        mimeType: mimeType,
+        totalChunks: totalChunks,
+        groupId: groupId,
+        relativePath: relativePath,
+      ),
     );
+    _updates.add(null);
+    _pumpOutbound();
+  }
+
+  /// 单活动出站调度：同一时刻只跑一个出站任务，完成后处理下一个。
+  Future<void> _pumpOutbound() async {
+    if (_pumping) return;
+    if (_activeOutbound != null) return;
+    if (_outboundQueue.isEmpty) return;
+    _pumping = true;
+    try {
+      final task = _outboundQueue.removeAt(0);
+      _activeOutbound = task;
+      await _runOutboundTask(task);
+    } finally {
+      _activeOutbound = null;
+      _pumping = false;
+      if (_outboundQueue.isNotEmpty) {
+        _pumpOutbound();
+      }
+    }
+  }
+
+  Future<void> _runOutboundTask(_OutboundTask task) async {
+    if (task.canceled) {
+      await _markTransferStatus(task.transferId, 'canceled', 0);
+      return;
+    }
+    final stored = await _db.getDevice(task.peerId);
+    if (stored == null) {
+      await _markTransferFailed(task.transferId, 'peer_removed');
+      return;
+    }
+    try {
+      _requireIdentityUnchanged(stored);
+    } on AppFailure catch (error) {
+      await _markTransferFailed(task.transferId, error.code);
+      return;
+    }
+    await _markTransferStatus(task.transferId, 'sending', 0);
+    _updates.add(null);
+    try {
+      await _transmitFile(
+        stored,
+        task.file,
+        task.transferId,
+        task.name,
+        task.length,
+        task.mimeType,
+        task.totalChunks,
+        relativePath: task.relativePath,
+        task: task,
+      );
+      await _markTransferStatus(task.transferId, 'sent', task.length);
+    } on _OutboundCancelled {
+      await _markTransferStatus(task.transferId, 'canceled', 0);
+    } catch (error) {
+      final code = error is AppFailure
+          ? error.code
+          : (_isConnectionError(error) ? 'connection_lost' : 'unknown');
+      await _markTransferFailed(task.transferId, code);
+    } finally {
+      _liveStats.remove(task.transferId);
+      _updates.add(null);
+    }
+  }
+
+  /// 取消一个出站传输。排队中的任务直接移除并标记 canceled；活动任务通过
+  /// dio CancelToken 与流中断标志中断。返回是否成功取消。
+  Future<bool> cancelOutbound(String transferId) async {
+    final queuedIndex = _outboundQueue
+        .indexWhere((task) => task.transferId == transferId);
+    if (queuedIndex >= 0) {
+      final task = _outboundQueue.removeAt(queuedIndex);
+      task.canceled = true;
+      await _markTransferStatus(transferId, 'canceled', 0);
+      return true;
+    }
+    final active = _activeOutbound;
+    if (active != null && active.transferId == transferId) {
+      active.canceled = true;
+      if (!active.cancelToken.isCancelled) {
+        active.cancelToken.cancel('user_canceled');
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// 整组取消：取消同 groupId 下所有仍在排队或活动中的出站任务。
+  Future<int> cancelOutboundGroup(String groupId) async {
+    var count = 0;
+    final ids = _outboundQueue
+        .where((task) => task.groupId == groupId)
+        .map((task) => task.transferId)
+        .toList();
+    for (final id in ids) {
+      if (await cancelOutbound(id)) count++;
+    }
+    final active = _activeOutbound;
+    if (active != null && active.groupId == groupId && !active.canceled) {
+      if (await cancelOutbound(active.transferId)) count++;
+    }
+    return count;
+  }
+
+  Future<void> _markTransferFailed(String transferId, String errorCode) async {
+    await (_db.update(_db.transfers)..where((tbl) => tbl.id.equals(transferId)))
+        .write(
+          TransfersCompanion(
+            status: const Value('failed'),
+            errorCode: Value(errorCode),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+    await (_db.update(_db.chatMessages)
+          ..where((tbl) => tbl.transferId.equals(transferId)))
+        .write(const ChatMessagesCompanion(status: Value('failed')));
+    _updates.add(null);
   }
 
   Future<void> _transmitFile(
@@ -718,6 +896,7 @@ class TransportService {
     String? mimeType,
     int totalChunks, {
     String? relativePath,
+    _OutboundTask? task,
   }) async {
     try {
       var targetPeer = peer;
@@ -731,15 +910,18 @@ class TransportService {
           mimeType,
           totalChunks,
           relativePath: relativePath,
+          task: task,
         );
       } catch (error) {
+        if (task?.canceled == true) throw const _OutboundCancelled();
         if (!_isConnectionError(error)) rethrow;
         await _db.markDeviceOffline(targetPeer.id);
         _updates.add(null);
         final resolved = await reconnectPeer?.call(targetPeer.id);
         if (resolved == null) rethrow;
+        if (task?.canceled == true) throw const _OutboundCancelled();
         targetPeer = resolved;
-        await _markTransferProgress(transferId, 0, force: true);
+        await _markTransferProgress(transferId, 0, force: true, task: task);
         await _sendFileAttempt(
           targetPeer,
           file,
@@ -749,11 +931,10 @@ class TransportService {
           mimeType,
           totalChunks,
           relativePath: relativePath,
+          task: task,
         );
       }
-      await _markTransferStatus(transferId, 'sent', length);
     } catch (_) {
-      await _markTransferStatus(transferId, 'failed', 0);
       rethrow;
     } finally {
       _updates.add(null);
@@ -769,7 +950,9 @@ class TransportService {
     String? mimeType,
     int totalChunks, {
     String? relativePath,
+    _OutboundTask? task,
   }) async {
+    if (task?.canceled == true) throw const _OutboundCancelled();
     final startBody = <String, Object?>{
       'id': transferId,
       'file_name': name,
@@ -782,33 +965,40 @@ class TransportService {
     if (relativePath != null && relativePath.isNotEmpty) {
       startBody['relative_path'] = relativePath;
     }
-    await _postSecure(peer, '/v1/transfers', startBody);
+    await _postSecure(peer, '/v1/transfers', startBody, task: task);
+    if (task?.canceled == true) throw const _OutboundCancelled();
     final freshPeer = await _freshPeer(peer);
     final usedStream = await _trySendEncryptedStream(
       freshPeer,
       file,
       transferId,
+      task: task,
     );
+    if (task?.canceled == true) throw const _OutboundCancelled();
     if (!usedStream) {
-      await _sendLegacyChunks(freshPeer, file, transferId, length);
+      await _sendLegacyChunks(freshPeer, file, transferId, length, task: task);
     }
+    if (task?.canceled == true) throw const _OutboundCancelled();
     final sha = await _sha256File(file);
     await (_db.update(
       _db.transfers,
     )..where((tbl) => tbl.id.equals(transferId))).write(
       TransfersCompanion(sha256: Value(sha), updatedAt: Value(DateTime.now())),
     );
-    await _postSecure(freshPeer, '/v1/transfers/$transferId/complete', {
-      'id': transferId,
-      'sha256': sha,
-    });
+    await _postSecure(
+      freshPeer,
+      '/v1/transfers/$transferId/complete',
+      {'id': transferId, 'sha256': sha},
+      task: task,
+    );
   }
 
   Future<bool> _trySendEncryptedStream(
     Device peer,
     File file,
-    String transferId,
-  ) async {
+    String transferId, {
+    _OutboundTask? task,
+  }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
@@ -819,7 +1009,8 @@ class TransportService {
     try {
       await _dio.postUri<void>(
         uri,
-        data: _encryptedFileStream(peer, file, transferId),
+        data: _encryptedFileStream(peer, file, transferId, task: task),
+        cancelToken: task?.cancelToken,
         options: dio.Options(
           headers: headers,
           contentType: 'application/octet-stream',
@@ -833,6 +1024,10 @@ class TransportService {
       );
       return true;
     } on dio.DioException catch (error) {
+      if (task?.canceled == true ||
+          error.type == dio.DioExceptionType.cancel) {
+        throw const _OutboundCancelled();
+      }
       final status = error.response?.statusCode;
       if (status == 404 || status == 405 || status == 415 || status == 501) {
         return false;
@@ -844,15 +1039,18 @@ class TransportService {
   Stream<List<int>> _encryptedFileStream(
     Device peer,
     File file,
-    String transferId,
-  ) async* {
+    String transferId, {
+    _OutboundTask? task,
+  }) async* {
     final length = await file.length();
     var buffer = BytesBuilder(copy: false);
     var index = 0;
     var sent = 0;
     await for (final part in file.openRead()) {
+      if (task?.canceled == true) throw const _OutboundCancelled();
       buffer.add(part);
       while (buffer.length >= encryptedStreamChunkSize) {
+        if (task?.canceled == true) throw const _OutboundCancelled();
         final bytes = buffer.takeBytes();
         final chunk = Uint8List.fromList(
           bytes.take(encryptedStreamChunkSize).toList(),
@@ -869,7 +1067,11 @@ class TransportService {
         yield _encodeFrame(encrypted);
         index++;
         sent += chunk.length;
-        await _markTransferProgress(transferId, sent.clamp(0, length));
+        await _markTransferProgress(
+          transferId,
+          sent.clamp(0, length),
+          task: task,
+        );
       }
     }
     final tail = buffer.takeBytes();
@@ -885,6 +1087,7 @@ class TransportService {
         transferId,
         sent.clamp(0, length),
         force: true,
+        task: task,
       );
     }
   }
@@ -893,21 +1096,25 @@ class TransportService {
     Device peer,
     File file,
     String transferId,
-    int length,
-  ) async {
+    int length, {
+    _OutboundTask? task,
+  }) async {
     final stream = file.openRead();
     var buffer = BytesBuilder(copy: false);
     var index = 0;
     var sent = 0;
     await for (final part in stream) {
+      if (task?.canceled == true) throw const _OutboundCancelled();
       buffer.add(part);
       while (buffer.length >= legacyTransferChunkSize) {
+        if (task?.canceled == true) throw const _OutboundCancelled();
         final chunk = buffer.takeBytes();
         await _sendChunk(
           peer,
           transferId,
           index,
           Uint8List.fromList(chunk.take(legacyTransferChunkSize).toList()),
+          task: task,
         );
         final rest = chunk.skip(legacyTransferChunkSize).toList();
         if (rest.isNotEmpty) {
@@ -915,17 +1122,18 @@ class TransportService {
         }
         index++;
         sent += legacyTransferChunkSize;
-        await _markTransferProgress(transferId, sent.clamp(0, length));
+        await _markTransferProgress(transferId, sent.clamp(0, length), task: task);
       }
     }
     final tail = buffer.takeBytes();
     if (tail.isNotEmpty || length == 0) {
-      await _sendChunk(peer, transferId, index, tail);
+      await _sendChunk(peer, transferId, index, tail, task: task);
       sent += tail.length;
       await _markTransferProgress(
         transferId,
         sent.clamp(0, length),
         force: true,
+        task: task,
       );
     }
   }
@@ -934,14 +1142,15 @@ class TransportService {
     Device peer,
     String transferId,
     int index,
-    List<int> bytes,
-  ) async {
+    List<int> bytes, {
+    _OutboundTask? task,
+  }) async {
     await _postSecure(peer, '/v1/transfers/$transferId/chunks/$index', {
       'transfer_id': transferId,
       'index': index,
       'bytes': b64(bytes),
       'length': bytes.length,
-    }, method: 'put');
+    }, method: 'put', task: task);
   }
 
   Uint8List _encodeFrame(EncryptedFileChunk chunk) {
@@ -1126,10 +1335,14 @@ class TransportService {
     final reader = _FrameReader(request.read());
     final file = File(transfer.filePath!);
     final sink = file.openWrite(mode: FileMode.write);
+    final cancel = _inboundCancels[id] = _InboundCancel();
     var expectedIndex = 0;
     var received = 0;
     try {
       while (true) {
+        if (cancel.canceled) {
+          throw const _OutboundCancelled();
+        }
         final frame = await reader.next();
         if (frame == null) break;
         if (frame.index != expectedIndex) {
@@ -1145,14 +1358,75 @@ class TransportService {
         await _markTransferProgress(id, received);
       }
       await sink.close();
+    } on _OutboundCancelled {
+      await sink.close();
+      await _abortInboundTransfer(id, received);
+      return _json({'ok': true, 'canceled': true});
     } catch (error) {
       await sink.close();
       await _markTransferStatus(id, 'failed', received);
+      _inboundCancels.remove(id);
       return Response(400, body: '$error');
     }
+    _inboundCancels.remove(id);
     _updates.add(null);
     return _json({'ok': true, 'received_bytes': received});
   }
+
+  /// 接收端被对端取消：关闭流、标记 canceled、删除临时文件。
+  Future<void> _abortInboundTransfer(String id, int received) async {
+    final transfer = await (_db.select(
+      _db.transfers,
+    )..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
+    final tempPath = transfer?.filePath;
+    await (_db.update(_db.transfers)..where((tbl) => tbl.id.equals(id))).write(
+      TransfersCompanion(
+        status: const Value('canceled'),
+        errorCode: const Value('remote_canceled'),
+        receivedBytes: Value(received),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    await (_db.update(_db.chatMessages)
+          ..where((tbl) => tbl.transferId.equals(id)))
+        .write(const ChatMessagesCompanion(status: Value('canceled')));
+    if (tempPath != null) {
+      final file = File(tempPath);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
+    }
+    _inboundCancels.remove(id);
+    _updates.add(null);
+  }
+
+  Future<Response> _receiveTransferCancel(
+    Request request,
+    String id,
+  ) => _withTrustedEnvelope(request, (peer, payload) async {
+    final transferId = _string(payload['transfer_id'], id);
+    final transfer = await (_db.select(
+      _db.transfers,
+    )..where((tbl) => tbl.id.equals(transferId))).getSingleOrNull();
+    if (transfer == null) {
+      return _json({'ok': false, 'reason': 'not_found'});
+    }
+    if (transfer.direction != 'in' ||
+        transfer.status != 'receiving') {
+      // 已完成或非接收中的传输无法取消。
+      return _json({'ok': false, 'reason': 'already_done'});
+    }
+    final cancel = _inboundCancels[transferId];
+    if (cancel != null) {
+      cancel.canceled = true;
+    } else {
+      // 没有活动流（例如旧版分块路径），直接中止落盘记录。
+      await _abortInboundTransfer(transferId, transfer.receivedBytes);
+    }
+    return _json({'ok': true, 'canceled': true});
+  });
 
   Future<Response> _receiveTransferChunk(
     Request request,
@@ -1246,11 +1520,13 @@ class TransportService {
     String path,
     Map<String, Object?> payload, {
     String method = 'post',
+    _OutboundTask? task,
   }) async {
     final current = await _freshPeer(peer);
     try {
-      await _postSecureOnce(current, path, payload, method: method);
+      await _postSecureOnce(current, path, payload, method: method, task: task);
     } catch (error) {
+      if (task?.canceled == true) throw const _OutboundCancelled();
       if (!_isConnectionError(error)) {
         rethrow;
       }
@@ -1260,7 +1536,8 @@ class TransportService {
       if (resolved == null) {
         rethrow;
       }
-      await _postSecureOnce(resolved, path, payload, method: method);
+      if (task?.canceled == true) throw const _OutboundCancelled();
+      await _postSecureOnce(resolved, path, payload, method: method, task: task);
     }
   }
 
@@ -1269,6 +1546,7 @@ class TransportService {
     String path,
     Map<String, Object?> payload, {
     String method = 'post',
+    _OutboundTask? task,
   }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
@@ -1278,10 +1556,18 @@ class TransportService {
       'sender_listen_port': _port,
     });
     final uri = Uri.parse('http://${peer.host}:${peer.port}$path');
-    if (method == 'put') {
-      await _dio.putUri(uri, data: envelope);
-    } else {
-      await _dio.postUri(uri, data: envelope);
+    try {
+      if (method == 'put') {
+        await _dio.putUri(uri, data: envelope, cancelToken: task?.cancelToken);
+      } else {
+        await _dio.postUri(uri, data: envelope, cancelToken: task?.cancelToken);
+      }
+    } on dio.DioException catch (error) {
+      if (task?.canceled == true ||
+          error.type == dio.DioExceptionType.cancel) {
+        throw const _OutboundCancelled();
+      }
+      rethrow;
     }
     await _db.updateDeviceEndpoint(
       id: peer.id,
@@ -1290,8 +1576,112 @@ class TransportService {
     );
   }
 
+  /// 安全信封 POST 并返回解析后的响应体（供需要读取对端应答的接口使用，如取消）。
+  Future<Map<String, Object?>> _postSecureExpect(
+    Device peer,
+    String path,
+    Map<String, Object?> payload,
+  ) async {
+    if (peer.host == null || peer.port == null) {
+      throw StateError('Peer endpoint is not known.');
+    }
+    final envelope = await _securityService.seal(peer, {
+      ...payload,
+      'sender_listen_port': _port,
+    });
+    final uri = Uri.parse('http://${peer.host}:${peer.port}$path');
+    final response = await _dio.postUri<Map<String, dynamic>>(uri, data: envelope);
+    final data = response.data;
+    if (data != null) return Map<String, Object?>.from(data);
+    return const <String, Object?>{};
+  }
+
   Future<Device> _freshPeer(Device peer) async {
     return await _db.getDevice(peer.id) ?? peer;
+  }
+
+  /// 构建传输中心所需的全部任务视图（合并 DB 持久化进度与内存实时速度）。
+  Future<List<TransferTaskView>> buildTransferTaskViews() async {
+    final transfers = await (_db.select(_db.transfers)
+          ..orderBy([(tbl) => OrderingTerm.desc(tbl.updatedAt)]))
+        .get();
+    final peers = <String, Device>{};
+    for (final transfer in transfers) {
+      if (!peers.containsKey(transfer.peerDeviceId)) {
+        peers[transfer.peerDeviceId] =
+            await _db.getDevice(transfer.peerDeviceId) ??
+            Device(
+              id: transfer.peerDeviceId,
+              displayName: transfer.peerDeviceId,
+              platform: 'unknown',
+              signingPublicKey: '',
+              exchangePublicKey: '',
+              fingerprint: '',
+              avatarSeed: '',
+              avatarColor: '#2563EB',
+              trusted: false,
+              endpointSource: 'auto',
+              createdAt: DateTime.now(),
+            );
+      }
+    }
+    return transfers.map((transfer) {
+      final stat = _liveStats[transfer.id];
+      final sentBytes = transfer.direction == 'out'
+          ? (stat?.sentBytes ?? transfer.receivedBytes)
+          : transfer.receivedBytes;
+      return TransferTaskView(
+        transfer: transfer,
+        peerDisplayName: peers[transfer.peerDeviceId]?.displayName ??
+            transfer.peerDeviceId,
+        sentBytes: sentBytes,
+        totalBytes: transfer.fileSize,
+        bytesPerSecond: stat?.bytesPerSecond ?? 0,
+        errorCode: transfer.errorCode,
+        groupId: transfer.groupId,
+      );
+    }).toList();
+  }
+
+  /// 按 groupId 聚合任务视图为组视图；无 groupId 的任务各成独立单元素组。
+  Future<List<TransferGroupView>> buildTransferGroupViews() async {
+    final tasks = await buildTransferTaskViews();
+    final byGroup = <String, List<TransferTaskView>>{};
+    for (final task in tasks) {
+      final key = task.groupId ?? task.transfer.id;
+      byGroup.putIfAbsent(key, () => []).add(task);
+    }
+    return byGroup.entries.map((entry) {
+      // 组内按更新时间排序，保证展示稳定。
+      entry.value.sort(
+        (a, b) => b.transfer.updatedAt.compareTo(a.transfer.updatedAt),
+      );
+      return TransferGroupView(
+        groupId: entry.key,
+        peerDisplayName: entry.value.first.peerDisplayName,
+        tasks: entry.value,
+      );
+    }).toList();
+  }
+
+  /// 判断已存储的对端设备是否支持主动取消传输。
+  bool deviceSupportsCancel(Device peer) =>
+      peerSupportsCancel(_db.deviceCapabilities(peer));
+
+  /// 请求对端取消一个出站传输（要求对端支持 transfer_cancel_v1）。
+  /// 返回是否被对端接受；对端不支持能力时返回 false（调用方应据此禁用并提示）。
+  Future<bool> requestRemoteCancel(Device peer, String transferId) async {
+    if (!deviceSupportsCancel(peer)) return false;
+    try {
+      final response = await _postSecureExpect(
+        peer,
+        '/v1/transfers/$transferId/cancel',
+        {'transfer_id': transferId},
+      );
+      return response['ok'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 发送前置守卫：已信任设备的身份公钥/指纹发生变化（identity_changed）时禁止
@@ -1355,20 +1745,42 @@ class TransportService {
     String id,
     int receivedBytes, {
     bool force = false,
+    _OutboundTask? task,
   }) async {
     final now = DateTime.now();
+    // 实时统计：更新内存速度（发送字节数与瞬时速率），供传输中心展示。
+    final stat = _liveStats[id];
+    if (stat != null) {
+      stat.sentBytes = receivedBytes;
+      final lastAt = stat.lastSampleAt;
+      if (lastAt == null ||
+          now.difference(lastAt) >= _speedSampleInterval) {
+        final delta = receivedBytes - stat.lastSampledBytes;
+        final elapsed = lastAt == null
+            ? _speedSampleInterval
+            : now.difference(lastAt);
+        if (elapsed.inMilliseconds > 0) {
+          stat.bytesPerSecond =
+              delta * 1000 / elapsed.inMilliseconds;
+        }
+        stat.lastSampleAt = now;
+        stat.lastSampledBytes = receivedBytes;
+      }
+    }
     final lastBytes = _lastProgressBytes[id];
     final lastAt = _lastProgressPersistedAt[id];
     if (!force &&
         lastBytes != null &&
         receivedBytes <= lastBytes &&
         lastAt != null) {
+      _updates.add(null);
       return;
     }
     if (!force &&
         lastAt != null &&
         now.difference(lastAt) < _progressPersistInterval) {
       _lastProgressBytes[id] = receivedBytes;
+      _updates.add(null);
       return;
     }
     await (_db.update(_db.transfers)..where((tbl) => tbl.id.equals(id))).write(
@@ -1412,6 +1824,50 @@ class TransportService {
   String? _nullableString(Object? value) =>
       value is String && value.isNotEmpty ? value : null;
   int _int(Object? value) => value is int ? value : int.tryParse('$value') ?? 0;
+}
+
+/// 一个排队或正在执行的单文件出站传输任务。
+class _OutboundTask {
+  _OutboundTask({
+    required this.transferId,
+    required this.peerId,
+    required this.file,
+    required this.name,
+    required this.length,
+    required this.mimeType,
+    required this.totalChunks,
+    required this.groupId,
+    this.relativePath,
+  });
+
+  final String transferId;
+  final String peerId;
+  final File file;
+  final String name;
+  final int length;
+  final String? mimeType;
+  final int totalChunks;
+  final String groupId;
+  final String? relativePath;
+
+  /// 运行期取消控制：dio 请求取消令牌 + 流生成中断标志。
+  final dio.CancelToken cancelToken = dio.CancelToken();
+  bool canceled = false;
+}
+
+/// 传输实时统计（内存态）：发送字节数 + 瞬时速度。
+class _LiveTransferStat {
+  _LiveTransferStat({required this.totalBytes});
+  final int totalBytes;
+  int sentBytes = 0;
+  double bytesPerSecond = 0;
+  DateTime? lastSampleAt;
+  int lastSampledBytes = 0;
+}
+
+/// 入站接收取消信号：被对端 cancel 接口触发后中断流读取循环。
+class _InboundCancel {
+  bool canceled = false;
 }
 
 class _FrameReader {

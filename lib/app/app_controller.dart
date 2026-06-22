@@ -13,6 +13,7 @@ import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
+import '../models/transfer_views.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
@@ -564,8 +565,8 @@ class AppController extends ChangeNotifier {
       await transportService.sendFolder(peer, rootName, entries);
       await refresh();
       status = languageCode == 'en'
-          ? 'Folder $rootName sent to ${titleFor(peer)}'
-          : '${titleFor(peer)} 文件夹 $rootName 发送完成';
+          ? 'Folder $rootName queued for ${titleFor(peer)}'
+          : '已将文件夹 $rootName 加入发给 ${titleFor(peer)} 的传输队列';
     } catch (error) {
       lastError = '$error';
       status = error is AppFailure
@@ -595,8 +596,8 @@ class AppController extends ChangeNotifier {
       await transportService.sendFiles(peer, paths);
       await refresh();
       status = languageCode == 'en'
-          ? 'Files sent to ${titleFor(peer)}'
-          : '${titleFor(peer)} 文件发送完成';
+          ? '${paths.length} file(s) queued for ${titleFor(peer)}'
+          : '已将 ${paths.length} 个文件加入发给 ${titleFor(peer)} 的传输队列';
     } catch (error) {
       lastError = '$error';
       status = error is AppFailure
@@ -800,6 +801,59 @@ class AppController extends ChangeNotifier {
         : '接收文件索引已清空，磁盘上的文件不会被删除';
     notifyListeners();
   }
+
+  /// 构建传输中心所需的任务视图（合并 DB 进度与内存实时速度）。
+  Future<List<TransferTaskView>> buildTransferTaskViews() =>
+      transportService.buildTransferTaskViews();
+
+  /// 构建传输中心所需的分组视图（按 groupId 聚合）。
+  Future<List<TransferGroupView>> buildTransferGroupViews() =>
+      transportService.buildTransferGroupViews();
+
+  /// 取消一个出站传输。优先本地取消（排队或活动任务）；若该任务已发送到对端且
+  /// 对端支持取消能力，则同时请求对端中断接收。返回是否成功取消。
+  Future<bool> cancelTransfer(Transfer transfer) async {
+    final localCanceled = await transportService.cancelOutbound(transfer.id);
+    if (localCanceled) {
+      status = languageCode == 'en'
+          ? 'Transfer canceled'
+          : '已取消传输';
+      notifyListeners();
+      return true;
+    }
+    // 非本地出站任务（如已发送中）：尝试请求对端取消。
+    final peer = await db.getDevice(transfer.peerDeviceId);
+    if (peer == null) return false;
+    if (!transportService.deviceSupportsCancel(peer)) {
+      status = languageCode == 'en'
+          ? 'The peer does not support canceling transfers'
+          : '对端版本不支持取消传输';
+      notifyListeners();
+      return false;
+    }
+    final ok = await transportService.requestRemoteCancel(peer, transfer.id);
+    status = ok
+        ? (languageCode == 'en' ? 'Transfer canceled' : '已取消传输')
+        : (languageCode == 'en'
+              ? 'Transfer could not be canceled'
+              : '无法取消该传输');
+    notifyListeners();
+    return ok;
+  }
+
+  /// 取消整组出站传输（文件夹或批量附件）。
+  Future<int> cancelTransferGroup(String groupId) async {
+    final count = await transportService.cancelOutboundGroup(groupId);
+    status = languageCode == 'en'
+        ? 'Canceled $count transfer(s)'
+        : '已取消 $count 个传输';
+    notifyListeners();
+    return count;
+  }
+
+  /// 判断对端是否支持主动取消传输（供 UI 决定是否显示取消按钮）。
+  bool peerSupportsCancel(Device peer) =>
+      transportService.deviceSupportsCancel(peer);
 
   Future<void> _loadSharingIntents() async {
     if (!(Platform.isAndroid || Platform.isIOS)) return;

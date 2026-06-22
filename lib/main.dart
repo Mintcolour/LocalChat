@@ -1335,7 +1335,13 @@ Future<void> _showRenameFileDialog(
   Transfer transfer,
 ) async {
   final formKey = GlobalKey<FormState>();
-  var value = transfer.fileName;
+  final initial = transfer.fileName;
+  final dot = initial.lastIndexOf('.');
+  final cursorOffset =
+      dot > 0 ? dot : initial.length; // 放在扩展名前面（无扩展名时置于末尾）
+  final textController = TextEditingController(text: initial)
+    ..selection = TextSelection.collapsed(offset: cursorOffset);
+  var value = initial;
   final result = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
@@ -1343,7 +1349,7 @@ Future<void> _showRenameFileDialog(
       content: Form(
         key: formKey,
         child: TextFormField(
-          initialValue: value,
+          controller: textController,
           autofocus: true,
           decoration: InputDecoration(labelText: controller.text.fileName),
           onChanged: (text) => value = text,
@@ -1376,6 +1382,7 @@ Future<void> _showRenameFileDialog(
   if (result != null) {
     await controller.renameMessageFile(message, transfer, result);
   }
+  textController.dispose();
 }
 
 class _FilePreview extends StatelessWidget {

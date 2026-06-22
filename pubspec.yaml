@@ -53,6 +53,7 @@ dependencies:
   drift: ^2.34.0
   drift_flutter: ^0.3.0
   sqlite3_flutter_libs: ^0.6.0+eol
+  flutter_secure_storage: ^9.2.2
 
 dev_dependencies:
   flutter_test:

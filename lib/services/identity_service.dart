@@ -6,11 +6,16 @@ import '../core/device_profile.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
+import 'secure_key_store.dart';
 
 class IdentityService {
-  IdentityService(this._db);
+  IdentityService(this._db, {SecureKeyStore? secureKeyStore})
+      // ignore: prefer_initializing_formals
+      : _secureKeyStore = secureKeyStore;
 
   final AppDatabase _db;
+  // ignore: prefer_initializing_formals
+  final SecureKeyStore? _secureKeyStore;
   final _signing = Ed25519();
   final _exchange = X25519();
 
@@ -45,13 +50,24 @@ class IdentityService {
   Future<LocalIdentity> load() async {
     final existingDeviceId = await _db.getSetting('identity.device_id');
     if (existingDeviceId != null) {
-      final signingPrivate = await _db.getSetting(
+      var signingPrivate = await _secureKeyStore?.readSigningPrivateKey();
+      var exchangePrivate = await _secureKeyStore?.readExchangePrivateKey();
+      final legacySigningPrivate = await _db.getSetting(
         'identity.signing_private_key',
       );
-      final signingPublic = await _db.getSetting('identity.signing_public_key');
-      final exchangePrivate = await _db.getSetting(
+      final legacyExchangePrivate = await _db.getSetting(
         'identity.exchange_private_key',
       );
+      var migrated = false;
+      if (signingPrivate == null && legacySigningPrivate != null) {
+        signingPrivate = legacySigningPrivate;
+        migrated = true;
+      }
+      if (exchangePrivate == null && legacyExchangePrivate != null) {
+        exchangePrivate = legacyExchangePrivate;
+        migrated = true;
+      }
+      final signingPublic = await _db.getSetting('identity.signing_public_key');
       final exchangePublic = await _db.getSetting(
         'identity.exchange_public_key',
       );
@@ -71,6 +87,15 @@ class IdentityService {
         avatarColor ??= avatarColorFor(avatarSeed);
         await _db.setSetting('identity.avatar_seed', avatarSeed);
         await _db.setSetting('identity.avatar_color', avatarColor);
+        // 迁移：把私钥写入系统安全存储并清除数据库明文（仅当安全存储可用时）。
+        if (_secureKeyStore != null &&
+            (migrated || !(await _secureKeyStore.isMigrated()))) {
+          await _secureKeyStore.writeSigningPrivateKey(signingPrivate);
+          await _secureKeyStore.writeExchangePrivateKey(exchangePrivate);
+          await _db.setSetting('identity.signing_private_key', '');
+          await _db.setSetting('identity.exchange_private_key', '');
+          await _secureKeyStore.markMigrated();
+        }
         _signingKeyPair = SimpleKeyPairData(
           unb64(signingPrivate),
           publicKey: SimplePublicKey(
@@ -122,9 +147,18 @@ class IdentityService {
     await _db.setSetting('identity.avatar_seed', avatarSeed);
     await _db.setSetting('identity.avatar_color', avatarColor);
     await _db.setSetting('identity.platform', platform);
-    await _db.setSetting('identity.signing_private_key', signingPrivate);
+    // 私钥写入系统安全存储（若可用）；数据库只留公钥与空占位，避免明文落盘。
+    if (_secureKeyStore != null) {
+      await _secureKeyStore.writeSigningPrivateKey(signingPrivate);
+      await _secureKeyStore.writeExchangePrivateKey(exchangePrivate);
+      await _secureKeyStore.markMigrated();
+      await _db.setSetting('identity.signing_private_key', '');
+      await _db.setSetting('identity.exchange_private_key', '');
+    } else {
+      await _db.setSetting('identity.signing_private_key', signingPrivate);
+      await _db.setSetting('identity.exchange_private_key', exchangePrivate);
+    }
     await _db.setSetting('identity.signing_public_key', signingPublic);
-    await _db.setSetting('identity.exchange_private_key', exchangePrivate);
     await _db.setSetting('identity.exchange_public_key', exchangePublic);
     await _db.setSetting('identity.fingerprint', fingerprint);
 

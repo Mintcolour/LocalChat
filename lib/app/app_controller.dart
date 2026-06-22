@@ -20,6 +20,7 @@ import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
 import '../services/identity_service.dart';
+import '../services/secure_key_store.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
 import '../services/window_service.dart';
@@ -32,11 +33,14 @@ class AppController extends ChangeNotifier {
     AppDatabase? database,
     FileStore? fileStore,
     ClipboardImportService? clipboardImportService,
+    SecureKeyStore? secureKeyStore,
   }) : db = database ?? AppDatabase(),
        fileStore = fileStore ?? FileStore(),
        clipboardImportService =
            clipboardImportService ?? ClipboardImportService() {
-    identityService = IdentityService(db);
+    // 生产环境由 main() 传入真实 SecureKeyStore；测试默认不传（回退数据库明文），
+    // 避免依赖平台安全存储插件。
+    identityService = IdentityService(db, secureKeyStore: secureKeyStore);
     securityService = SecurityService(identityService);
     transportService = TransportService(
       db,

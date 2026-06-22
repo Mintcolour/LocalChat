@@ -13,12 +13,14 @@ import 'core/peer_status.dart';
 import 'data/app_database.dart';
 import 'models/protocol.dart';
 import 'services/file_store.dart';
+import 'services/secure_key_store.dart';
 import 'ui/attachment_preview.dart';
 import 'ui/transfer_center_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final controller = AppController();
+  // 生产环境启用系统安全存储（Android Keystore / Windows DPAPI）保存身份私钥。
+  final controller = AppController(secureKeyStore: const SecureKeyStore());
   await controller.initialize();
   runApp(LocalChatApp(controller: controller));
 }

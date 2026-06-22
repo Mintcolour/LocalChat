@@ -15,6 +15,7 @@ import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
 import '../models/transfer_views.dart';
 import '../models/chat_page.dart';
+import 'settings_controller.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
@@ -23,11 +24,6 @@ import '../services/security_service.dart';
 import '../services/transport_service.dart';
 import '../services/window_service.dart';
 
-const _autoCopyReceivedTextKey = 'auto_copy_received_text';
-const _languageCodeKey = 'language_code';
-const _themeModeKey = 'theme_mode';
-const _trayEnabledKey = 'tray_enabled';
-const _autostartEnabledKey = 'autostart_enabled';
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
@@ -49,6 +45,7 @@ class AppController extends ChangeNotifier {
       this.fileStore,
     );
     discoveryService = DiscoveryService(db, identityService);
+    settings = SettingsController(db: db, windowService: windowService);
   }
 
   final AppDatabase db;
@@ -59,6 +56,9 @@ class AppController extends ChangeNotifier {
   late final SecurityService securityService;
   late final TransportService transportService;
   late final DiscoveryService discoveryService;
+  /// 设置子控制器：语言/外观/自动复制/托盘/开机自启。对外字段与方法通过下方 getter
+  /// 与同名方法委托，UI 无需感知拆分（计划 P1 控制器拆分）。
+  late final SettingsController settings;
 
   LocalIdentity? identity;
   List<Device> devices = [];
@@ -86,11 +86,21 @@ class AppController extends ChangeNotifier {
   PendingPairRequest? pendingPairRequest;
   bool initialized = false;
   bool busy = false;
-  bool autoCopyReceivedText = true;
-  bool trayEnabled = true;
-  bool autostartEnabled = false;
-  String languageCode = 'zh';
-  String themeModeCode = 'system';
+  /// 细粒度操作状态：记录正在进行的特定操作（配对、重试等），替代仅靠全局 busy
+  /// 禁用输入的做法。文件传输已入队异步执行，不再阻塞输入框（计划 P1）。
+  final Set<String> activeOperations = {};
+  bool isOperationActive(String key) => activeOperations.contains(key);
+
+  void _beginOperation(String key) {
+    activeOperations.add(key);
+  }
+
+  void _endOperation(String key) {
+    activeOperations.remove(key);
+  }
+
+  /// 是否有任何特定操作进行中（不含文件传输，传输已入队异步执行）。
+  bool get anyOperationActive => activeOperations.isNotEmpty;
   String status = '正在启动 LocalChat...';
   String? lastError;
   String? notificationText;
@@ -114,23 +124,24 @@ class AppController extends ChangeNotifier {
 
   AppText get text => AppText(languageCode);
 
+  // 设置相关字段委托到 SettingsController，保持对外 API 不变。
+  bool get autoCopyReceivedText => settings.autoCopyReceivedText;
+  bool get trayEnabled => settings.trayEnabled;
+  bool get autostartEnabled => settings.autostartEnabled;
+  String get languageCode => settings.languageCode;
+  String get themeModeCode => settings.themeModeCode;
+  set themeModeCode(String value) => settings.themeModeCode = value;
+  set languageCode(String value) => settings.languageCode = value;
+
   Future<void> initialize() async {
     busy = true;
     notifyListeners();
     try {
       identity = await identityService.load();
-      languageCode = await db.getSetting(_languageCodeKey) ?? 'zh';
-      final storedThemeMode = await db.getSetting(_themeModeKey);
-      themeModeCode =
-          const {'system', 'light', 'dark'}.contains(storedThemeMode)
-          ? storedThemeMode!
-          : 'system';
-      autoCopyReceivedText =
-          await db.getSetting(_autoCopyReceivedTextKey) != 'false';
-      transportService.autoCopyReceivedText = autoCopyReceivedText;
-      transportService.languageCode = languageCode;
+      await settings.load();
+      transportService.autoCopyReceivedText = settings.autoCopyReceivedText;
+      transportService.languageCode = settings.languageCode;
       transportService.reconnectPeer = _waitForReconnectedPeer;
-      await _loadWindowPreferences();
       final port = await transportService.start();
       await discoveryService.start(listenPort: port);
       _transportSub = transportService.updates.listen(
@@ -367,68 +378,54 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setLanguageCode(String value) async {
-    if (value != 'zh' && value != 'en') return;
-    languageCode = value;
-    transportService.languageCode = value;
-    await db.setSetting(_languageCodeKey, value);
-    status = value == 'en' ? 'Language set to English' : '语言已切换为中文';
+    await settings.setLanguageCode(value);
+    transportService.languageCode = settings.languageCode;
+    status = settings.languageCode == 'en'
+        ? 'Language set to English'
+        : '语言已切换为中文';
     notifyListeners();
   }
 
   Future<void> setThemeModeCode(String value) async {
-    if (!const {'system', 'light', 'dark'}.contains(value)) return;
-    themeModeCode = value;
-    await db.setSetting(_themeModeKey, value);
-    status = languageCode == 'en' ? 'Appearance updated' : '外观模式已更新';
+    await settings.setThemeModeCode(value);
+    status = settings.languageCode == 'en' ? 'Appearance updated' : '外观模式已更新';
     notifyListeners();
   }
 
   Future<void> setAutoCopyReceivedText(bool value) async {
-    autoCopyReceivedText = value;
-    transportService.autoCopyReceivedText = value;
-    await db.setSetting(_autoCopyReceivedTextKey, value ? 'true' : 'false');
+    await settings.setAutoCopyReceivedText(value);
+    transportService.autoCopyReceivedText = settings.autoCopyReceivedText;
     status = value
-        ? (languageCode == 'en'
+        ? (settings.languageCode == 'en'
               ? 'Auto-copy received text enabled'
               : '已开启自动复制收到的文字')
-        : (languageCode == 'en'
+        : (settings.languageCode == 'en'
               ? 'Auto-copy received text disabled'
               : '已关闭自动复制收到的文字');
     notifyListeners();
   }
 
-  /// 读取托盘/开机自启偏好，并与原生状态同步。仅 Windows 生效。
-  Future<void> _loadWindowPreferences() async {
-    if (!windowService.isSupported) return;
-    final storedTray = await db.getSetting(_trayEnabledKey);
-    trayEnabled = storedTray != 'false';
-    final storedAutostart = await db.getSetting(_autostartEnabledKey);
-    // 优先信任原生实际状态（用户可能在系统设置里改动过）。
-    final nativeAutostart = await windowService.isAutostartEnabled();
-    autostartEnabled = storedAutostart == 'true' || nativeAutostart;
-    if (autostartEnabled != nativeAutostart) {
-      await windowService.setAutostartEnabled(autostartEnabled);
-    }
-    await windowService.setTrayEnabled(trayEnabled);
-  }
-
   Future<void> setTrayEnabled(bool value) async {
-    trayEnabled = value;
-    await db.setSetting(_trayEnabledKey, value ? 'true' : 'false');
-    await windowService.setTrayEnabled(value);
+    await settings.setTrayEnabled(value);
     status = value
-        ? (languageCode == 'en' ? 'Minimize to tray enabled' : '已开启最小化到托盘')
-        : (languageCode == 'en' ? 'Minimize to tray disabled' : '已关闭最小化到托盘');
+        ? (settings.languageCode == 'en'
+              ? 'Minimize to tray enabled'
+              : '已开启最小化到托盘')
+        : (settings.languageCode == 'en'
+              ? 'Minimize to tray disabled'
+              : '已关闭最小化到托盘');
     notifyListeners();
   }
 
   Future<void> setAutostartEnabled(bool value) async {
-    autostartEnabled = value;
-    await db.setSetting(_autostartEnabledKey, value ? 'true' : 'false');
-    await windowService.setAutostartEnabled(value);
+    await settings.setAutostartEnabled(value);
     status = value
-        ? (languageCode == 'en' ? 'Start on boot enabled' : '已开启开机自启')
-        : (languageCode == 'en' ? 'Start on boot disabled' : '已关闭开机自启');
+        ? (settings.languageCode == 'en'
+              ? 'Start on boot enabled'
+              : '已开启开机自启')
+        : (settings.languageCode == 'en'
+              ? 'Start on boot disabled'
+              : '已关闭开机自启');
     notifyListeners();
   }
 
@@ -489,7 +486,7 @@ class AppController extends ChangeNotifier {
     status = languageCode == 'en'
         ? 'Connecting to ${device.displayName} with code $code'
         : '正在用配对码 $code 连接 ${device.displayName}';
-    busy = true;
+    _beginOperation('pair:${device.id}');
     notifyListeners();
     try {
       await transportService.pairWith(device, code);
@@ -501,7 +498,7 @@ class AppController extends ChangeNotifier {
       lastError = '$error';
       status = languageCode == 'en' ? 'Pairing failed' : '配对失败';
     } finally {
-      busy = false;
+      _endOperation('pair:${device.id}');
       notifyListeners();
     }
   }
@@ -509,7 +506,7 @@ class AppController extends ChangeNotifier {
   /// 跨网段手动加好友：按 host:port 探测对端身份并落库（未信任）。
   /// 返回落库设备；失败返回 null。成功后用户可在设备列表发起配对。
   Future<Device?> addPeerManually(String host, int port) async {
-    busy = true;
+    _beginOperation('addPeer');
     status = languageCode == 'en'
         ? 'Connecting to $host:$port...'
         : '正在连接 $host:$port...';
@@ -536,7 +533,7 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return null;
     } finally {
-      busy = false;
+      _endOperation('addPeer');
       notifyListeners();
     }
   }
@@ -544,7 +541,7 @@ class AppController extends ChangeNotifier {
   Future<void> sendText(String text) async {
     final peer = await _currentSelectedPeer();
     if (peer == null || !peer.trusted || text.trim().isEmpty) return;
-    busy = true;
+    _beginOperation('sendText:${peer.id}');
     notifyListeners();
     try {
       await transportService.sendText(peer, text.trim());
@@ -560,7 +557,7 @@ class AppController extends ChangeNotifier {
                 ? '${titleFor(peer)} disconnected, message failed'
                 : '${titleFor(peer)} 连接断开，消息发送失败');
     } finally {
-      busy = false;
+      _endOperation('sendText:${peer.id}');
       notifyListeners();
     }
   }
@@ -694,8 +691,6 @@ class AppController extends ChangeNotifier {
       return;
     }
     entries.sort((a, b) => a.relative.compareTo(b.relative));
-    busy = true;
-    notifyListeners();
     try {
       await transportService.sendFolder(peer, rootName, entries);
       await refresh();
@@ -710,7 +705,6 @@ class AppController extends ChangeNotifier {
                 ? '${titleFor(peer)} disconnected, folder transfer failed'
                 : '${titleFor(peer)} 连接断开，文件夹发送失败');
     } finally {
-      busy = false;
       notifyListeners();
     }
   }
@@ -725,8 +719,6 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    busy = true;
-    notifyListeners();
     try {
       await transportService.sendFiles(peer, paths);
       await refresh();
@@ -741,7 +733,6 @@ class AppController extends ChangeNotifier {
                 ? '${titleFor(peer)} disconnected, file transfer failed'
                 : '${titleFor(peer)} 连接断开，文件发送失败');
     } finally {
-      busy = false;
       notifyListeners();
     }
   }
@@ -796,7 +787,7 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    busy = true;
+    _beginOperation('retry:${message.id}');
     lastError = null;
     status = languageCode == 'en' ? 'Retrying...' : '正在重试发送…';
     notifyListeners();
@@ -820,7 +811,7 @@ class AppController extends ChangeNotifier {
           : (languageCode == 'en' ? 'Retry failed' : '重新发送失败');
     } finally {
       await refresh();
-      busy = false;
+      _endOperation('retry:${message.id}');
       notifyListeners();
     }
   }
@@ -829,7 +820,7 @@ class AppController extends ChangeNotifier {
     final path = message.filePath;
     final transferId = message.transferId;
     if (path == null || path.isEmpty || transferId == null) return;
-    busy = true;
+    _beginOperation('save:$transferId');
     notifyListeners();
     try {
       final peer = await db.getDevice(message.peerDeviceId);
@@ -861,7 +852,7 @@ class AppController extends ChangeNotifier {
       lastError = '$error';
       status = languageCode == 'en' ? 'Save failed' : '保存失败';
     } finally {
-      busy = false;
+      _endOperation('save:$transferId');
       notifyListeners();
     }
   }
@@ -890,7 +881,7 @@ class AppController extends ChangeNotifier {
       return false;
     }
     if (newFileName.trim() == transfer.fileName) return true;
-    busy = true;
+    _beginOperation('rename:$transferId');
     notifyListeners();
     try {
       final peer = await db.getDevice(message.peerDeviceId);
@@ -923,7 +914,7 @@ class AppController extends ChangeNotifier {
       status = languageCode == 'en' ? 'Rename failed' : '文件重命名失败';
       return false;
     } finally {
-      busy = false;
+      _endOperation('rename:$transferId');
       notifyListeners();
     }
   }

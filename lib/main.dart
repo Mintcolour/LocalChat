@@ -1433,7 +1433,10 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = peer.trusted && !controller.busy;
+    // 文件传输已入队异步执行，不再用全局 busy 禁用输入框；仅当当前会话正在
+    // 发送文本时短暂禁用，避免重复提交（计划 P1：传输期间仍可输入和发送）。
+    final enabled = peer.trusted &&
+        !controller.isOperationActive('sendText:${peer.id}');
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {

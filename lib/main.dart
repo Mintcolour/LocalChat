@@ -37,14 +37,14 @@ class LocalChatApp extends StatelessWidget {
         title: 'LocalChat',
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF2563EB),
+            seedColor: const Color(0xFF1FA37A), // LocalChat 自有绿色系，非微信品牌。
             brightness: Brightness.light,
           ),
           useMaterial3: true,
         ),
         darkTheme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF2563EB),
+            seedColor: const Color(0xFF1FA37A),
             brightness: Brightness.dark,
           ),
           useMaterial3: true,
@@ -228,7 +228,8 @@ class _LocalChatHomeState extends State<LocalChatHome> {
                   }
                   return Row(
                     children: [
-                      SizedBox(width: 340, child: devicePane),
+                      // 桌面端会话列表约 300px + 内容区（计划：导航栏 64 + 会话列表 ~300 + 内容区）。
+                      SizedBox(width: 300, child: devicePane),
                       const VerticalDivider(width: 1),
                       Expanded(child: chatPane),
                     ],
@@ -682,15 +683,21 @@ class _ChatPaneState extends State<_ChatPane> {
           if (controller.pendingAttachmentBatch != null)
             _AttachmentTray(controller: controller),
           Expanded(
-            child: controller.messages.isEmpty
-                ? Center(
-                    child: Text(
-                      peer.trusted
-                          ? controller.text.sayOrDropFile
-                          : controller.text.pairFirst,
-                    ),
-                  )
-                : _messageList(),
+            child: ColoredBox(
+              // 浅灰聊天背景（深色模式取 surfaceContainerLow）。
+              color: Theme.of(context).brightness == Brightness.light
+                  ? const Color(0xFFEDEDED)
+                  : Theme.of(context).colorScheme.surfaceContainerLow,
+              child: controller.messages.isEmpty
+                  ? Center(
+                      child: Text(
+                        peer.trusted
+                            ? controller.text.sayOrDropFile
+                            : controller.text.pairFirst,
+                      ),
+                    )
+                  : _messageList(),
+            ),
           ),
           if (!_atBottom && controller.messages.isNotEmpty)
             _NewMessageButton(onTap: _jumpToBottom),
@@ -1119,6 +1126,36 @@ Future<void> _confirmDeleteConversation(
   }
 }
 
+Future<bool> _confirmDanger(
+  BuildContext context,
+  AppController controller,
+  String title,
+  String body,
+) async {
+  final text = controller.text;
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(body),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(text.cancel),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(text.delete),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
 Future<void> _showSettingsDialog(
   BuildContext context,
   AppController controller,
@@ -1129,6 +1166,7 @@ Future<void> _showSettingsDialog(
       animation: controller,
       builder: (context, _) => AlertDialog(
         title: Text(controller.text.settings),
+        scrollable: true,
         content: SizedBox(
           width: 420,
           child: Column(
@@ -1232,7 +1270,16 @@ Future<void> _showSettingsDialog(
                 title: Text(controller.text.clearHistory),
                 subtitle: Text(controller.text.clearHistorySubtitle),
                 trailing: TextButton(
-                  onPressed: controller.clearHistory,
+                  // 危险操作：二次确认（计划：危险操作增加二次确认）。
+                  onPressed: () async {
+                    final ok = await _confirmDanger(
+                      context,
+                      controller,
+                      controller.text.clearHistory,
+                      controller.text.clearHistorySubtitle,
+                    );
+                    if (ok) controller.clearHistory();
+                  },
                   child: Text(controller.text.clear),
                 ),
               ),
@@ -1241,7 +1288,15 @@ Future<void> _showSettingsDialog(
                 title: Text(controller.text.clearTransfers),
                 subtitle: Text(controller.text.clearTransfersSubtitle),
                 trailing: TextButton(
-                  onPressed: controller.clearTransferIndex,
+                  onPressed: () async {
+                    final ok = await _confirmDanger(
+                      context,
+                      controller,
+                      controller.text.clearTransfers,
+                      controller.text.clearTransfersSubtitle,
+                    );
+                    if (ok) controller.clearTransferIndex();
+                  },
                   child: Text(controller.text.clear),
                 ),
               ),
@@ -1532,15 +1587,17 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final outgoing = message.direction == 'out';
-    final color = outgoing
-        ? Theme.of(context).colorScheme.primaryContainer
-        : Theme.of(context).colorScheme.surfaceContainerHighest;
+    final scheme = Theme.of(context).colorScheme;
+    // 出站：绿色气泡；入站：白色/暗色表面气泡（微信式左右分列）。
+    final bubbleColor = outgoing
+        ? scheme.primary
+        : (Theme.of(context).brightness == Brightness.light
+              ? Colors.white
+              : scheme.surfaceContainerHighest);
+    final textColor = outgoing ? scheme.onPrimary : scheme.onSurface;
     final align = outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final peer = outgoing ? null : controller.selectedDevice;
     final identity = controller.identity;
-    final title = outgoing
-        ? identity?.displayName ?? controller.text.me
-        : (peer == null ? controller.text.peer : controller.titleFor(peer));
     final avatar = outgoing
         ? (identity == null
               ? null
@@ -1563,24 +1620,37 @@ class _MessageBubble extends StatelessWidget {
     final bubble = Column(
       crossAxisAlignment: align,
       children: [
-        Text(title, style: Theme.of(context).textTheme.labelSmall),
-        const SizedBox(height: 3),
         Container(
           constraints: const BoxConstraints(maxWidth: 520),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(8),
+            color: bubbleColor,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(14),
+              topRight: const Radius.circular(14),
+              bottomLeft: Radius.circular(outgoing ? 14 : 4),
+              bottomRight: Radius.circular(outgoing ? 4 : 14),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
           ),
-          child: message.kind == 'file'
-              ? _FileMessage(
-                  controller: controller,
-                  message: message,
-                  transfer: message.transferId == null
-                      ? null
-                      : controller.transfersById[message.transferId!],
-                )
-              : _TextMessage(controller: controller, message: message),
+          child: DefaultTextStyle.merge(
+            style: TextStyle(color: textColor),
+            child: message.kind == 'file'
+                ? _FileMessage(
+                    controller: controller,
+                    message: message,
+                    transfer: message.transferId == null
+                        ? null
+                        : controller.transfersById[message.transferId!],
+                  )
+                : _TextMessage(controller: controller, message: message),
+          ),
         ),
         if (outgoing && message.status == 'failed' && message.kind != 'file')
           TextButton.icon(
@@ -1598,7 +1668,7 @@ class _MessageBubble extends StatelessWidget {
       ],
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: outgoing
             ? MainAxisAlignment.end

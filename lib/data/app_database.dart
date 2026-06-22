@@ -513,6 +513,73 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
+  /// 以 (createdAt, id) 为游标向前分页加载消息，取最新的 [limit] 条（或游标之前
+  /// 的 [limit] 条）。返回按时间升序排列（与 [listMessages] 一致），便于直接追加。
+  Future<List<ChatMessage>> listMessagesPage({
+    required String conversationId,
+    int limit = 50,
+    DateTime? beforeCreatedAt,
+    String? beforeId,
+  }) {
+    final query = select(chatMessages)
+      ..where((tbl) => tbl.conversationId.equals(conversationId))
+      ..orderBy([
+        (tbl) => OrderingTerm.desc(tbl.createdAt),
+        (tbl) => OrderingTerm.desc(tbl.id),
+      ])
+      ..limit(limit + 1); // 多取 1 条用于判断是否还有更早的页。
+    if (beforeCreatedAt != null && beforeId != null) {
+      query.where(
+        (tbl) =>
+            tbl.createdAt.isSmallerThanValue(beforeCreatedAt) |
+            (tbl.createdAt.equals(beforeCreatedAt) &
+                tbl.id.isSmallerThanValue(beforeId)),
+      );
+    }
+    return query.get().then((rows) {
+      // 截掉多余的探测行，只返回 limit 条；反转为升序方便 UI 展示。
+      final trimmed = rows.length > limit ? rows.sublist(0, limit) : rows;
+      return trimmed.reversed.toList();
+    });
+  }
+
+  /// 计算会话在 lastReadAt 之后的未读消息数。lastReadAt 为空时全部计入。
+  Future<int> unreadCount(String conversationId, {DateTime? lastReadAt}) async {
+    final query = select(chatMessages)
+      ..where((tbl) => tbl.conversationId.equals(conversationId))
+      ..where((tbl) => tbl.direction.equals('in'));
+    if (lastReadAt != null) {
+      query.where((tbl) => tbl.createdAt.isBiggerOrEqualValue(lastReadAt));
+    }
+    final count = await query.get().then((rows) => rows.length);
+    return count;
+  }
+
+  /// 当前会话内搜索消息体/文件名，结果上限 100 条，按时间升序。
+  Future<List<ChatMessage>> searchMessages(
+    String conversationId,
+    String query,
+  ) async {
+    final like = '%$query%';
+    final rows = await (select(chatMessages)
+          ..where((tbl) => tbl.conversationId.equals(conversationId))
+          ..where(
+            (tbl) =>
+                (tbl.body.like(like)) | (tbl.fileName.like(like)),
+          )
+          ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)])
+          ..limit(100))
+        .get();
+    return rows;
+  }
+
+  /// 更新会话最后阅读时间，用于未读统计清零。
+  Future<void> markConversationRead(String conversationId) async {
+    await (update(conversations)
+          ..where((tbl) => tbl.id.equals(conversationId)))
+        .write(ConversationsCompanion(lastReadAt: Value(DateTime.now())));
+  }
+
   Future<List<Transfer>> listTransfersByIds(Iterable<String> ids) {
     final values = ids.where((id) => id.isNotEmpty).toSet().toList();
     if (values.isEmpty) return Future.value(const <Transfer>[]);

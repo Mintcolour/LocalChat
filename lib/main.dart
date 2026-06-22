@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app/app_controller.dart';
+import 'core/app_text.dart';
 import 'core/device_profile.dart';
 import 'core/file_types.dart';
 import 'core/formatters.dart';
@@ -250,11 +251,15 @@ class _DevicePane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final filter = controller.conversationFilter.toLowerCase();
+    bool matches(Device device) =>
+        filter.isEmpty ||
+        controller.titleFor(device).toLowerCase().contains(filter);
     final trusted = controller.devices
-        .where((device) => device.trusted)
+        .where((device) => device.trusted && matches(device))
         .toList();
     final discovered = controller.devices
-        .where((device) => !device.trusted)
+        .where((device) => !device.trusted && matches(device))
         .toList();
     return Material(
       color: Theme.of(context).colorScheme.surface,
@@ -262,6 +267,16 @@ class _DevicePane extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         children: [
           _LocalIdentityCard(controller: controller),
+          const SizedBox(height: 12),
+          TextField(
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: controller.text.filterConversations,
+              prefixIcon: const Icon(Icons.search, size: 18),
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (value) => controller.setConversationFilter(value),
+          ),
           const SizedBox(height: 16),
           _SectionTitle(
             title: controller.text.trustedDevices,
@@ -358,17 +373,56 @@ class _DeviceTile extends StatelessWidget {
             device.port! <= 0
         ? controller.text.notConnected
         : displayHost(device.host, device.port);
+    final conversation = controller.conversations
+        .where((c) => c.peerDeviceId == device.id)
+        .firstOrNull;
+    final unread = conversation == null
+        ? 0
+        : (controller.unreadCounts[conversation.id] ?? 0);
+    final lastMessage = conversation == null
+        ? null
+        : controller.lastMessages[conversation.id];
+    final preview = controller.text.lastMessagePreview(
+      lastMessage?.body,
+      lastMessage?.fileName,
+    );
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: ListTile(
         selected: selected,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        leading: _DeviceAvatar(
-          name: controller.titleFor(device),
-          platform: device.platform,
-          avatarSeed: device.avatarSeed,
-          avatarColor: device.avatarColor,
-          trusted: device.trusted,
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            _DeviceAvatar(
+              name: controller.titleFor(device),
+              platform: device.platform,
+              avatarSeed: device.avatarSeed,
+              avatarColor: device.avatarColor,
+              trusted: device.trusted,
+            ),
+            if (unread > 0)
+              Positioned(
+                right: -4,
+                top: -4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  constraints: const BoxConstraints(minWidth: 18),
+                  child: Text(
+                    '$unread',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onError,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
         title: Text(
           controller.titleFor(device),
@@ -376,12 +430,23 @@ class _DeviceTile extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          '${controller.text.peerStatus(device)} · ${device.platform} · $endpoint',
+          preview.isEmpty
+              ? '${controller.text.peerStatus(device)} · ${device.platform} · $endpoint'
+              : preview,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         trailing: device.trusted
-            ? const Icon(Icons.chevron_right)
+            ? (unread > 0
+                  ? Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    )
+                  : const Icon(Icons.chevron_right))
             : FilledButton.tonal(
                 onPressed: controller.busy
                     ? null
@@ -441,7 +506,7 @@ Color _colorFromHex(String value) {
   return Color(parsed ?? 0xFF2563EB);
 }
 
-class _ChatPane extends StatelessWidget {
+class _ChatPane extends StatefulWidget {
   const _ChatPane({
     required this.controller,
     required this.textController,
@@ -457,6 +522,98 @@ class _ChatPane extends StatelessWidget {
   final bool showHeader;
 
   @override
+  State<_ChatPane> createState() => _ChatPaneState();
+}
+
+class _ChatPaneState extends State<_ChatPane> {
+  final ScrollController _scrollController = ScrollController();
+  bool _atBottom = true;
+  int _lastMessageCount = 0;
+  bool _searching = false;
+  String _searchQuery = '';
+  List<ChatMessage> _searchResults = const [];
+  int _searchIndex = 0;
+
+  AppController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+    controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_onControllerChanged);
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (!mounted) return;
+    final count = controller.messages.length;
+    // 新消息到达且用户不在底部时，显示“新消息”按钮（不强制滚动）。
+    if (count > _lastMessageCount && !_atBottom) {
+      setState(() {});
+    }
+    // 用户在底部且消息增加，自动滚到底部。
+    if (count != _lastMessageCount) {
+      _lastMessageCount = count;
+      if (_atBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+      } else {
+        setState(() {});
+      }
+    }
+  }
+
+  void _onScroll() {
+    final pos = _scrollController.position;
+    final nearBottom = pos.pixels >= pos.maxScrollExtent - 80;
+    if (nearBottom != _atBottom) {
+      setState(() => _atBottom = nearBottom);
+    }
+    // 滚到顶部加载更早消息。
+    if (pos.pixels <= 100 && controller.hasMoreMessages) {
+      final prevMax = pos.maxScrollExtent;
+      controller.loadMoreMessages().then((_) {
+        // 保持视觉位置：加载后把滚动条下移新增内容高度。
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final delta = _scrollController.position.maxScrollExtent - prevMax;
+          if (delta > 0) {
+            _scrollController.jumpTo(_scrollController.offset + delta);
+          }
+        });
+      });
+    }
+  }
+
+  void _jumpToBottom() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+  }
+
+  Future<void> _runSearch(String query) async {
+    _searchQuery = query;
+    if (query.trim().isEmpty) {
+      setState(() {
+        _searchResults = const [];
+        _searchIndex = 0;
+      });
+      return;
+    }
+    final results = await controller.searchSelectedMessages(query);
+    if (!mounted || _searchQuery != query) return;
+    setState(() {
+      _searchResults = results;
+      _searchIndex = results.isNotEmpty ? results.length - 1 : 0;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final peer = controller.selectedDevice;
     if (peer == null) {
@@ -465,10 +622,10 @@ class _ChatPane extends StatelessWidget {
     final online = isPeerOnline(peer);
     return DropTarget(
       enable: peer.trusted,
-      onDragEntered: (_) => onDragState(true),
-      onDragExited: (_) => onDragState(false),
+      onDragEntered: (_) => widget.onDragState(true),
+      onDragExited: (_) => widget.onDragState(false),
       onDragDone: (details) {
-        onDragState(false);
+        widget.onDragState(false);
         final files = <String>[];
         final folders = <String>[];
         for (final entry in details.files) {
@@ -488,11 +645,42 @@ class _ChatPane extends StatelessWidget {
       },
       child: Column(
         children: [
-          if (showHeader)
+          if (widget.showHeader)
             _DesktopPeerHeader(controller: controller, peer: peer),
           if (peer.trusted && !online)
             _ConnectionBanner(controller: controller, peer: peer),
-          if (dragging) _DropBanner(controller: controller),
+          if (widget.dragging) _DropBanner(controller: controller),
+          if (peer.trusted) _SearchBar(
+            controller: controller,
+            searching: _searching,
+            query: _searchQuery,
+            resultCount: _searchResults.length,
+            index: _searchIndex,
+            onToggle: () => setState(() {
+              _searching = !_searching;
+              if (!_searching) {
+                _searchQuery = '';
+                _searchResults = const [];
+              }
+            }),
+            onChanged: _runSearch,
+            onPrev: () => setState(() {
+              if (_searchResults.isNotEmpty) {
+                _searchIndex = (_searchIndex - 1) < 0
+                    ? _searchResults.length - 1
+                    : _searchIndex - 1;
+                _scrollToMessage(_searchResults[_searchIndex]);
+              }
+            }),
+            onNext: () => setState(() {
+              if (_searchResults.isNotEmpty) {
+                _searchIndex = (_searchIndex + 1) % _searchResults.length;
+                _scrollToMessage(_searchResults[_searchIndex]);
+              }
+            }),
+          ),
+          if (controller.pendingAttachmentBatch != null)
+            _AttachmentTray(controller: controller),
           Expanded(
             child: controller.messages.isEmpty
                 ? Center(
@@ -502,21 +690,257 @@ class _ChatPane extends StatelessWidget {
                           : controller.text.pairFirst,
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: controller.messages.length,
-                    itemBuilder: (context, index) {
-                      return _MessageBubble(
-                        controller: controller,
-                        message: controller.messages[index],
-                      );
-                    },
-                  ),
+                : _messageList(),
           ),
+          if (!_atBottom && controller.messages.isNotEmpty)
+            _NewMessageButton(onTap: _jumpToBottom),
           _Composer(
             controller: controller,
-            textController: textController,
+            textController: widget.textController,
             peer: peer,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _messageList() {
+    final messages = controller.messages;
+    final items = <_MessageItem>[];
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      // 日期分隔：首条或与上一条不在同一天时插入分隔条。
+      final prev = i == 0 ? null : messages[i - 1];
+      final showDate =
+          prev == null || !_sameDay(prev.createdAt, message.createdAt);
+      if (showDate) {
+        items.add(
+          _MessageItem(
+            key: ValueKey('date-${message.createdAt.millisecondsSinceEpoch}'),
+            isDateSeparator: true,
+            date: message.createdAt,
+          ),
+        );
+      }
+      items.add(
+        _MessageItem(key: ValueKey('msg-${message.id}'), message: message),
+      );
+    }
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        if (item.isDateSeparator) {
+          return _DateSeparator(date: item.date!, text: controller.text);
+        }
+        return _MessageBubble(
+          controller: controller,
+          message: item.message!,
+        );
+      },
+    );
+  }
+
+  void _scrollToMessage(ChatMessage target) {
+    // 简单实现：目标在当前已加载页内则滚动到对应位置；否则跳到底部提示加载。
+    final index = controller.messages.indexWhere((m) => m.id == target.id);
+    if (index < 0) return;
+    // 估算偏移：消息项含气泡 + padding，按粗略高度滚动。
+    if (_scrollController.hasClients) {
+      final offset = (index * 88.0)
+          .clamp(0.0, _scrollController.position.maxScrollExtent);
+      _scrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  bool _sameDay(DateTime a, DateTime b) {
+    final la = a.toLocal();
+    final lb = b.toLocal();
+    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+  }
+}
+
+class _MessageItem {
+  const _MessageItem({
+    this.key,
+    this.message,
+    this.date,
+    this.isDateSeparator = false,
+  });
+
+  final Key? key;
+  final ChatMessage? message;
+  final DateTime? date;
+  final bool isDateSeparator;
+}
+
+class _DateSeparator extends StatelessWidget {
+  const _DateSeparator({required this.date, required this.text});
+  final DateTime date;
+  final AppText text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            formatChatDateSeparator(date),
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NewMessageButton extends StatelessWidget {
+  const _NewMessageButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: FloatingActionButton.small(
+          heroTag: const ValueKey('jump-to-bottom'),
+          onPressed: onTap,
+          child: const Icon(Icons.arrow_downward),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchBar extends StatelessWidget {
+  const _SearchBar({
+    required this.controller,
+    required this.searching,
+    required this.query,
+    required this.resultCount,
+    required this.index,
+    required this.onToggle,
+    required this.onChanged,
+    required this.onPrev,
+    required this.onNext,
+  });
+
+  final AppController controller;
+  final bool searching;
+  final String query;
+  final int resultCount;
+  final int index;
+  final VoidCallback onToggle;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!searching) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8, top: 4),
+          child: IconButton(
+            tooltip: controller.text.searchMessages,
+            onPressed: onToggle,
+            icon: const Icon(Icons.search, size: 20),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              autofocus: true,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: controller.text.searchMessages,
+                prefixIcon: const Icon(Icons.search, size: 18),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: onChanged,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            resultCount == 0
+                ? controller.text.noResults
+                : controller.text.searchResultLabel(index + 1, resultCount),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          IconButton(
+            onPressed: resultCount == 0 ? null : onPrev,
+            icon: const Icon(Icons.keyboard_arrow_up),
+          ),
+          IconButton(
+            onPressed: resultCount == 0 ? null : onNext,
+            icon: const Icon(Icons.keyboard_arrow_down),
+          ),
+          IconButton(
+            tooltip: controller.text.close,
+            onPressed: onToggle,
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 输入框上方的待发送附件托盘：展示当前批量附件，支持移除单项后统一确认发送。
+class _AttachmentTray extends StatelessWidget {
+  const _AttachmentTray({required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final batch = controller.pendingAttachmentBatch;
+    if (batch == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          for (final item in batch.items)
+            Chip(
+              label: Text(item.fileName),
+              onDeleted: () => controller.removeAttachmentFromBatch(
+                batch.id,
+                item,
+              ),
+            ),
+          ActionChip(
+            label: Text(controller.text.confirmSend(batch.items.length)),
+            onPressed: () => controller.completeAttachmentBatch(
+              batch.id,
+              batch.items,
+            ),
           ),
         ],
       ),
@@ -1153,7 +1577,7 @@ class _MessageBubble extends StatelessWidget {
                       ? null
                       : controller.transfersById[message.transferId!],
                 )
-              : _TextMessage(message),
+              : _TextMessage(controller: controller, message: message),
         ),
         if (outgoing && message.status == 'failed' && message.kind != 'file')
           TextButton.icon(
@@ -1191,13 +1615,42 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _TextMessage extends StatelessWidget {
-  const _TextMessage(this.message);
+  const _TextMessage({required this.controller, required this.message});
 
+  final AppController controller;
   final ChatMessage message;
 
   @override
   Widget build(BuildContext context) {
-    return SelectableText(message.body ?? '');
+    final body = message.body ?? '';
+    final links = extractLinks(body);
+    if (links.isEmpty) {
+      return SelectableText(body);
+    }
+    // 含链接时用富文本渲染，链接可点击打开（保留文本选择）。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectableText(body),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final link in links)
+              ActionChip(
+                avatar: const Icon(Icons.link, size: 16),
+                label: Text(
+                  link,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onPressed: () => controller.openUrl(link),
+              ),
+          ],
+        ),
+      ],
+    );
   }
 }
 

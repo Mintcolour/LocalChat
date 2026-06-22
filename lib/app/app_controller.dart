@@ -14,6 +14,7 @@ import '../data/app_database.dart';
 import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
 import '../models/transfer_views.dart';
+import '../models/chat_page.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
@@ -64,6 +65,22 @@ class AppController extends ChangeNotifier {
   List<Conversation> conversations = [];
   List<ChatMessage> messages = [];
   Map<String, Transfer> transfersById = {};
+  /// 各会话未读数（conversationId -> count）。
+  Map<String, int> unreadCounts = {};
+  /// 各会话最后一条消息预览（conversationId -> message）。
+  Map<String, ChatMessage> lastMessages = {};
+  /// 会话列表名称过滤关键字。
+  String conversationFilter = '';
+
+  void setConversationFilter(String value) {
+    if (value == conversationFilter) return;
+    conversationFilter = value;
+    notifyListeners();
+  }
+  /// 当前会话分页游标（用于判断是否还有更早的页 + 向前加载）。
+  ChatPageCursor? messageCursor;
+  /// 当前会话是否还有更早的消息可加载。
+  bool hasMoreMessages = false;
   Device? selectedDevice;
   Conversation? selectedConversation;
   PendingPairRequest? pendingPairRequest;
@@ -93,6 +110,7 @@ class AppController extends ChangeNotifier {
   bool _refreshingPresence = false;
   bool _refreshInFlight = false;
   bool _refreshQueued = false;
+  bool _loadingMore = false;
 
   AppText get text => AppText(languageCode);
 
@@ -171,7 +189,13 @@ class AppController extends ChangeNotifier {
                 .firstOrNull ??
             selectedDevice;
         selectedConversation = await db.ensureConversation(selectedDevice!);
-        messages = await db.listMessages(selectedConversation!.id);
+        // 分页：刷新时只重载最新一页，避免大历史全量加载。
+        final page = await db.listMessagesPage(
+          conversationId: selectedConversation!.id,
+          limit: 50,
+        );
+        messages = page;
+        _updateMessageCursor(page);
         final transferIds = messages
             .map((message) => message.transferId)
             .whereType<String>();
@@ -180,6 +204,7 @@ class AppController extends ChangeNotifier {
           for (final transfer in transfers) transfer.id: transfer,
         };
       }
+      await _loadConversationSummaries();
     } finally {
       _refreshInFlight = false;
     }
@@ -193,9 +218,101 @@ class AppController extends ChangeNotifier {
   Future<void> selectDevice(Device device) async {
     selectedDevice = device;
     selectedConversation = await db.ensureConversation(device);
-    messages = await db.listMessages(selectedConversation!.id);
+    final page = await db.listMessagesPage(
+      conversationId: selectedConversation!.id,
+      limit: 50,
+    );
+    messages = page;
+    _updateMessageCursor(page);
+    await _ensureTransfersForCurrentMessages();
+    await markConversationRead(device.id);
     notifyListeners();
     await _flushPendingShareIfPossible();
+  }
+
+  /// 向前加载更早的一页消息（用户滚到顶部时触发）。
+  Future<void> loadMoreMessages() async {
+    final conversation = selectedConversation;
+    if (conversation == null || !hasMoreMessages || _loadingMore) return;
+    _loadingMore = true;
+    try {
+      final page = await db.listMessagesPage(
+        conversationId: conversation.id,
+        limit: 50,
+        beforeCreatedAt: messageCursor?.beforeCreatedAt,
+        beforeId: messageCursor?.beforeId,
+      );
+      final more = page;
+      if (more.isEmpty) {
+        hasMoreMessages = false;
+        notifyListeners();
+        return;
+      }
+      messages = [...more, ...messages];
+      _updateMessageCursor(messages);
+      await _ensureTransfersForCurrentMessages();
+      notifyListeners();
+    } finally {
+      _loadingMore = false;
+    }
+  }
+
+  /// 标记当前选中会话为已读，清零未读数。
+  Future<void> markConversationRead(String deviceId) async {
+    final conversation = await db.getConversationForDevice(deviceId);
+    if (conversation == null) return;
+    await db.markConversationRead(conversation.id);
+    unreadCounts[conversation.id] = 0;
+  }
+
+  /// 在当前会话内搜索消息（正文/文件名），结果上限 100 条。
+  Future<List<ChatMessage>> searchSelectedMessages(String query) async {
+    final conversation = selectedConversation;
+    if (conversation == null || query.trim().isEmpty) return const [];
+    return db.searchMessages(conversation.id, query.trim());
+  }
+
+  void _updateMessageCursor(List<ChatMessage> page) {
+    if (page.isEmpty) {
+      messageCursor = null;
+      hasMoreMessages = false;
+      return;
+    }
+    final oldest = page.first;
+    messageCursor = ChatPageCursor(
+      beforeCreatedAt: oldest.createdAt,
+      beforeId: oldest.id,
+    );
+    // listMessagesPage 多取 1 条；若本次返回等于 50，说明很可能还有更早页。
+    hasMoreMessages = page.length >= 50;
+  }
+
+  Future<void> _ensureTransfersForCurrentMessages() async {
+    final transferIds = messages
+        .map((message) => message.transferId)
+        .whereType<String>();
+    final transfers = await db.listTransfersByIds(transferIds);
+    transfersById = {for (final transfer in transfers) transfer.id: transfer};
+  }
+
+  Future<void> _loadConversationSummaries() async {
+    final summaries = <String, int>{};
+    final lasts = <String, ChatMessage>{};
+    for (final conversation in conversations) {
+      final lastPage = await db.listMessagesPage(
+        conversationId: conversation.id,
+        limit: 1,
+      );
+      final last = lastPage.isEmpty ? null : lastPage.first;
+      if (last != null) lasts[conversation.id] = last;
+      final unread = await db.unreadCount(
+        conversation.id,
+        lastReadAt: conversation.lastReadAt,
+      );
+      summaries[conversation.id] = unread;
+    }
+    unreadCounts = summaries;
+    lastMessages = lasts;
   }
 
   void closeConversation() {
@@ -203,6 +320,8 @@ class AppController extends ChangeNotifier {
     selectedConversation = null;
     messages = [];
     transfersById = {};
+    messageCursor = null;
+    hasMoreMessages = false;
     notifyListeners();
   }
 
@@ -512,6 +631,22 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 从当前待发送批量中移除单个附件（托盘删除单项）。
+  void removeAttachmentFromBatch(int batchId, PendingAttachment item) {
+    final batch = pendingAttachmentBatch;
+    if (batch == null || batch.id != batchId) return;
+    final remaining = batch.items.where((it) => it.path != item.path).toList();
+    if (remaining.isEmpty) {
+      pendingAttachmentBatch = null;
+    } else {
+      pendingAttachmentBatch = PendingAttachmentBatch(
+        id: batch.id,
+        items: remaining,
+      );
+    }
+    notifyListeners();
+  }
+
   /// 选择一个文件夹并递归发送，保留目录结构。
   Future<void> pickAndSendFolder() async {
     final folderPath = await FilePicker.platform.getDirectoryPath();
@@ -625,6 +760,18 @@ class AppController extends ChangeNotifier {
   Future<void> openPath(String? path) async {
     if (path == null || path.isEmpty) return;
     await OpenFilex.open(path);
+  }
+
+  /// 打开消息中的链接：Windows 用默认浏览器，其他平台用 OpenFilex。
+  Future<void> openUrl(String url) async {
+    if (url.isEmpty) return;
+    if (Platform.isWindows) {
+      try {
+        await Process.run('cmd', ['/c', 'start', '', url]);
+        return;
+      } catch (_) {}
+    }
+    await OpenFilex.open(url);
   }
 
   Future<void> openFolder(String? path) async {

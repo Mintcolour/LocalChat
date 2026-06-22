@@ -51,6 +51,32 @@ String formatMessageTimestamp(DateTime value) {
       '${_two(local.hour)}:${_two(local.minute)}:${_two(local.second)}';
 }
 
+/// 日期分隔标题：今天/昨天/本周内显示星期、更早显示完整日期。
+String formatChatDateSeparator(DateTime value, {DateTime? now}) {
+  final local = value.toLocal();
+  final reference = (now ?? DateTime.now()).toLocal();
+  final today = DateTime(reference.year, reference.month, reference.day);
+  final that = DateTime(local.year, local.month, local.day);
+  final diffDays = today.difference(that).inDays;
+  if (diffDays == 0) return '今天';
+  if (diffDays == 1) return '昨天';
+  if (diffDays < 7) {
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    return weekdays[that.weekday - 1];
+  }
+  return '${local.year}年${local.month}月${local.day}日';
+}
+
+/// 消息中可点击链接的正则（http/https）。
+final linkRegExp = RegExp(
+  r'https?://[^\s<>()]+',
+  caseSensitive: false,
+);
+
+/// 提取消息文本中的全部链接。
+List<String> extractLinks(String text) =>
+    linkRegExp.allMatches(text).map((m) => m.group(0)!).toList();
+
 String messageStatusLabel(String status) {
   return switch (status) {
     'queued' => '排队中',

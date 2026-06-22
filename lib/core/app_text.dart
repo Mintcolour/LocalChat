@@ -128,6 +128,18 @@ class AppText {
   String get transferCanceledHint => en
       ? 'The peer version does not support canceling in-progress transfers.'
       : '对端版本不支持取消进行中的传输。';
+  String get searchMessages => en ? 'Search messages' : '搜索消息';
+  String get noResults => en ? 'No results' : '无结果';
+  String searchResultLabel(int index, int total) =>
+      en ? '$index / $total' : '$index / $total';
+  String get close => en ? 'Close' : '关闭';
+  String get filterConversations =>
+      en ? 'Filter conversations' : '过滤会话';
+  String lastMessagePreview(String? body, String? fileName) {
+    if (body != null && body.isNotEmpty) return body;
+    if (fileName != null && fileName.isNotEmpty) return '[$fileName]';
+    return '';
+  }
 
   String _formatBytes(double bytes) {
     if (bytes < 1024) return '${bytes.toStringAsFixed(0)} B';

@@ -11,6 +11,7 @@ import '../core/app_text.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
+import '../models/pending_attachment.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
@@ -27,17 +28,21 @@ const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 
 class AppController extends ChangeNotifier {
-  AppController()
-    : db = AppDatabase(),
-      fileStore = FileStore(),
-      clipboardImportService = ClipboardImportService() {
+  AppController({
+    AppDatabase? database,
+    FileStore? fileStore,
+    ClipboardImportService? clipboardImportService,
+  }) : db = database ?? AppDatabase(),
+       fileStore = fileStore ?? FileStore(),
+       clipboardImportService =
+           clipboardImportService ?? ClipboardImportService() {
     identityService = IdentityService(db);
     securityService = SecurityService(identityService);
     transportService = TransportService(
       db,
       identityService,
       securityService,
-      fileStore,
+      this.fileStore,
     );
     discoveryService = DiscoveryService(db, identityService);
   }
@@ -71,6 +76,8 @@ class AppController extends ChangeNotifier {
   int notificationSerial = 0;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
+  PendingAttachmentBatch? pendingAttachmentBatch;
+  int _attachmentBatchSerial = 0;
 
   StreamSubscription<void>? _transportSub;
   StreamSubscription<String>? _notificationSub;
@@ -212,6 +219,16 @@ class AppController extends ChangeNotifier {
     final peer = selectedDevice;
     if (peer == null) return;
     final title = titleFor(peer);
+    await fileStore.deleteManagedEditedFiles(
+      messages
+          .where((message) => message.direction == 'out')
+          .map((message) => message.filePath),
+    );
+    await fileStore.deleteIncomingFiles(
+      messages
+          .where((message) => message.direction == 'in')
+          .map((message) => message.filePath),
+    );
     await db.deletePeerSession(peer.id);
     selectedConversation = null;
     selectedDevice = null;
@@ -264,12 +281,8 @@ class AppController extends ChangeNotifier {
     await db.setSetting(_trayEnabledKey, value ? 'true' : 'false');
     await windowService.setTrayEnabled(value);
     status = value
-        ? (languageCode == 'en'
-              ? 'Minimize to tray enabled'
-              : '已开启最小化到托盘')
-        : (languageCode == 'en'
-              ? 'Minimize to tray disabled'
-              : '已关闭最小化到托盘');
+        ? (languageCode == 'en' ? 'Minimize to tray enabled' : '已开启最小化到托盘')
+        : (languageCode == 'en' ? 'Minimize to tray disabled' : '已关闭最小化到托盘');
     notifyListeners();
   }
 
@@ -278,12 +291,8 @@ class AppController extends ChangeNotifier {
     await db.setSetting(_autostartEnabledKey, value ? 'true' : 'false');
     await windowService.setAutostartEnabled(value);
     status = value
-        ? (languageCode == 'en'
-              ? 'Start on boot enabled'
-              : '已开启开机自启')
-        : (languageCode == 'en'
-              ? 'Start on boot disabled'
-              : '已关闭开机自启');
+        ? (languageCode == 'en' ? 'Start on boot enabled' : '已开启开机自启')
+        : (languageCode == 'en' ? 'Start on boot disabled' : '已关闭开机自启');
     notifyListeners();
   }
 
@@ -428,7 +437,60 @@ class AppController extends ChangeNotifier {
         .map((file) => file.path)
         .whereType<String>()
         .toList();
-    await sendFiles(paths);
+    await queueFilesForSending(paths);
+  }
+
+  Future<void> queueFilesForSending(List<String> paths) async {
+    final validPaths = paths
+        .where((path) => path.isNotEmpty && File(path).existsSync())
+        .toList();
+    if (validPaths.isEmpty) return;
+    final peer = await _currentSelectedPeer();
+    if (peer == null || !peer.trusted) {
+      pendingSharedFiles = validPaths;
+      status = languageCode == 'en'
+          ? 'Select a trusted device before sending ${validPaths.length} files'
+          : '先选择一个已信任设备，再发送 ${validPaths.length} 个文件';
+      notifyListeners();
+      return;
+    }
+    final items = validPaths.map(PendingAttachment.fromPath).toList();
+    if (!items.any((item) => item.isImage)) {
+      await sendFiles(validPaths);
+      return;
+    }
+    pendingAttachmentBatch = PendingAttachmentBatch(
+      id: ++_attachmentBatchSerial,
+      items: items,
+    );
+    status = languageCode == 'en'
+        ? 'Review attachments before sending'
+        : '请预览附件后确认发送';
+    notifyListeners();
+  }
+
+  Future<void> completeAttachmentBatch(
+    int batchId,
+    List<PendingAttachment> items,
+  ) async {
+    if (pendingAttachmentBatch?.id != batchId) return;
+    pendingAttachmentBatch = null;
+    notifyListeners();
+    await sendFiles(items.map((item) => item.path).toList());
+  }
+
+  Future<void> cancelAttachmentBatch(
+    int batchId,
+    List<PendingAttachment> items,
+  ) async {
+    if (pendingAttachmentBatch?.id == batchId) {
+      pendingAttachmentBatch = null;
+    }
+    for (final item in items.where((item) => item.edited)) {
+      await fileStore.deleteManagedEditedFile(item.path);
+    }
+    status = languageCode == 'en' ? 'Sending cancelled' : '已取消发送';
+    notifyListeners();
   }
 
   /// 选择一个文件夹并递归发送，保留目录结构。
@@ -451,10 +513,9 @@ class AppController extends ChangeNotifier {
     final rootName = p.basename(folderPath);
     final entries = <({String absolute, String relative})>[];
     try {
-      final stream = Directory(folderPath).list(
-        recursive: true,
-        followLinks: false,
-      );
+      final stream = Directory(
+        folderPath,
+      ).list(recursive: true, followLinks: false);
       await for (final entity in stream) {
         if (entity is File) {
           final rel = p.relative(entity.path, from: folderPath);
@@ -534,7 +595,7 @@ class AppController extends ChangeNotifier {
         ? 'Read ${paths.length} files from clipboard, sending...'
         : '从剪贴板读取到 ${paths.length} 个文件，正在发送...';
     notifyListeners();
-    await sendFiles(paths);
+    await queueFilesForSending(paths);
     return true;
   }
 
@@ -580,6 +641,8 @@ class AppController extends ChangeNotifier {
         transferId: transferId,
         savedPath: saved.path,
         savedUri: saved.uri,
+        fileName: saved.actualFileName,
+        localFilePath: null,
       );
       status = languageCode == 'en'
           ? 'Saved to ${saved.path ?? saved.uri ?? 'Downloads/LocalChat'}'
@@ -594,7 +657,71 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  bool canRenameMessageFile(ChatMessage message, Transfer? transfer) {
+    return message.direction == 'in' &&
+        transfer?.status == 'received' &&
+        (transfer?.savedPath != null || transfer?.savedUri != null);
+  }
+
+  Future<bool> renameMessageFile(
+    ChatMessage message,
+    Transfer transfer,
+    String newFileName,
+  ) async {
+    final transferId = message.transferId;
+    final savedPath = transfer.savedPath;
+    if (transferId == null || savedPath == null) return false;
+    final validation = FileStore.validateFileName(newFileName);
+    if (validation != null) {
+      lastError = 'invalid_file_name:$validation';
+      status = languageCode == 'en'
+          ? 'Invalid file name'
+          : '文件名无效，请检查非法字符、保留名或末尾空格';
+      notifyListeners();
+      return false;
+    }
+    if (newFileName.trim() == transfer.fileName) return true;
+    busy = true;
+    notifyListeners();
+    try {
+      final peer = await db.getDevice(message.peerDeviceId);
+      final renamed = await fileStore.renameSavedFile(
+        currentPath: savedPath,
+        currentUri: transfer.savedUri,
+        newFileName: newFileName,
+        conversationFolder: FileStore.conversationFolder(
+          peer?.displayName ?? message.peerDeviceId,
+          message.peerDeviceId,
+        ),
+        at: transfer.createdAt,
+        relativePath: transfer.relativePath,
+      );
+      await db.renameReceivedTransfer(
+        transferId: transferId,
+        fileName: renamed.fileName,
+        mimeType: renamed.mimeType,
+        savedPath: renamed.path,
+        savedUri: renamed.uri,
+        relativePath: renamed.relativePath,
+      );
+      status = languageCode == 'en'
+          ? 'File renamed to ${renamed.fileName}'
+          : '文件已重命名为 ${renamed.fileName}';
+      await refresh();
+      return true;
+    } catch (error) {
+      lastError = '$error';
+      status = languageCode == 'en' ? 'Rename failed' : '文件重命名失败';
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> clearHistory() async {
+    await fileStore.clearManagedEditedFiles();
+    await fileStore.clearIncomingFiles();
     await db.clearHistory();
     messages = [];
     conversations = [];
@@ -655,7 +782,7 @@ class AppController extends ChangeNotifier {
       await sendText(text);
     }
     if (files.isNotEmpty) {
-      await sendFiles(files);
+      await queueFilesForSending(files);
     }
   }
 

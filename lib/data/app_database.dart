@@ -103,12 +103,24 @@ class AppDatabase extends _$AppDatabase {
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (m, from, to) async {
       if (from < 2) {
-        await m.addColumn(devices, devices.avatarSeed);
-        await m.addColumn(devices, devices.avatarColor);
-        await m.addColumn(chatMessages, chatMessages.mimeType);
-        await m.addColumn(transfers, transfers.mimeType);
-        await m.addColumn(transfers, transfers.savedPath);
-        await m.addColumn(transfers, transfers.savedUri);
+        if (!await _columnExists('devices', 'avatar_seed')) {
+          await m.addColumn(devices, devices.avatarSeed);
+        }
+        if (!await _columnExists('devices', 'avatar_color')) {
+          await m.addColumn(devices, devices.avatarColor);
+        }
+        if (!await _columnExists('chat_messages', 'mime_type')) {
+          await m.addColumn(chatMessages, chatMessages.mimeType);
+        }
+        if (!await _columnExists('transfers', 'mime_type')) {
+          await m.addColumn(transfers, transfers.mimeType);
+        }
+        if (!await _columnExists('transfers', 'saved_path')) {
+          await m.addColumn(transfers, transfers.savedPath);
+        }
+        if (!await _columnExists('transfers', 'saved_uri')) {
+          await m.addColumn(transfers, transfers.savedUri);
+        }
         final rows = await select(devices).get();
         for (final device in rows) {
           final seed = avatarSeedFor(device.id, device.fingerprint);
@@ -123,14 +135,23 @@ class AppDatabase extends _$AppDatabase {
         }
       }
       if (from < 3) {
-        await m.addColumn(chatMessages, chatMessages.relativePath);
-        await m.addColumn(transfers, transfers.relativePath);
+        if (!await _columnExists('chat_messages', 'relative_path')) {
+          await m.addColumn(chatMessages, chatMessages.relativePath);
+        }
+        if (!await _columnExists('transfers', 'relative_path')) {
+          await m.addColumn(transfers, transfers.relativePath);
+        }
       }
-      if (from < 4) {
+      if (from < 4 && !await _columnExists('devices', 'endpoint_source')) {
         await m.addColumn(devices, devices.endpointSource);
       }
     },
   );
+
+  Future<bool> _columnExists(String tableName, String columnName) async {
+    final rows = await customSelect('PRAGMA table_info("$tableName")').get();
+    return rows.any((row) => row.read<String>('name') == columnName);
+  }
 
   Future<String?> getSetting(String key) async {
     final row = await (select(
@@ -419,13 +440,65 @@ class AppDatabase extends _$AppDatabase {
     required String transferId,
     String? savedPath,
     String? savedUri,
-  }) async {
+    String? fileName,
+    String? localFilePath,
+  }) => transaction(() async {
     await (update(transfers)..where((tbl) => tbl.id.equals(transferId))).write(
       TransfersCompanion(
         savedPath: Value(savedPath),
         savedUri: Value(savedUri),
+        fileName: fileName == null ? const Value.absent() : Value(fileName),
+        filePath: localFilePath == null
+            ? const Value.absent()
+            : Value(localFilePath),
         updatedAt: Value(DateTime.now()),
       ),
     );
-  }
+    if (fileName != null) {
+      await (update(chatMessages)
+            ..where((tbl) => tbl.transferId.equals(transferId)))
+          .write(ChatMessagesCompanion(fileName: Value(fileName)));
+    }
+    if (localFilePath != null) {
+      await (update(chatMessages)
+            ..where((tbl) => tbl.transferId.equals(transferId)))
+          .write(ChatMessagesCompanion(filePath: Value(localFilePath)));
+    }
+  });
+
+  Future<void> renameReceivedTransfer({
+    required String transferId,
+    required String fileName,
+    required String? mimeType,
+    required String? savedPath,
+    required String? savedUri,
+    required String? relativePath,
+  }) => transaction(() async {
+    final now = DateTime.now();
+    await (update(transfers)..where((tbl) => tbl.id.equals(transferId))).write(
+      TransfersCompanion(
+        fileName: Value(fileName),
+        mimeType: Value(mimeType),
+        savedPath: Value(savedPath),
+        savedUri: Value(savedUri),
+        filePath: savedUri == null && savedPath != null
+            ? Value(savedPath)
+            : const Value.absent(),
+        relativePath: Value(relativePath),
+        updatedAt: Value(now),
+      ),
+    );
+    await (update(
+      chatMessages,
+    )..where((tbl) => tbl.transferId.equals(transferId))).write(
+      ChatMessagesCompanion(
+        fileName: Value(fileName),
+        mimeType: Value(mimeType),
+        filePath: savedUri == null && savedPath != null
+            ? Value(savedPath)
+            : const Value.absent(),
+        relativePath: Value(relativePath),
+      ),
+    );
+  });
 }

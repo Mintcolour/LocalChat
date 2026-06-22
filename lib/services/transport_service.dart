@@ -860,11 +860,11 @@ class TransportService {
         _notifications.add(
           languageCode == 'en'
               ? relativePath != null
-                  ? 'Received ${peer.displayName}: $relativePath'
-                  : 'Received file from ${peer.displayName}: $fileName'
+                    ? 'Received ${peer.displayName}: $relativePath'
+                    : 'Received file from ${peer.displayName}: $fileName'
               : relativePath != null
-                  ? '收到 ${peer.displayName}：$relativePath'
-                  : '收到 ${peer.displayName} 的文件：$fileName',
+              ? '收到 ${peer.displayName}：$relativePath'
+              : '收到 ${peer.displayName} 的文件：$fileName',
         );
         _updates.add(null);
         return _json({'ok': true, 'path': file.path});
@@ -990,11 +990,15 @@ class TransportService {
           peer.id,
         ),
         at: transfer.createdAt,
+        relativePath: transfer.relativePath,
+        moveSource: Platform.isWindows,
       );
       await _db.markTransferSaved(
         transferId: id,
         savedPath: saved.path,
         savedUri: saved.uri,
+        fileName: saved.actualFileName,
+        localFilePath: saved.uri == null ? saved.path : null,
       );
     } catch (_) {
       // The verified temp file remains available even if the public save fails.

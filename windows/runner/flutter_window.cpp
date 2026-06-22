@@ -14,6 +14,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "autostart.h"
+#include "single_instance.h"
 
 namespace {
 
@@ -289,6 +290,19 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == single_instance::ActivationMessage()) {
+    ShowWindow(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOWNORMAL);
+    SetForegroundWindow(hwnd);
+    FLASHWINFO flash = {};
+    flash.cbSize = sizeof(flash);
+    flash.hwnd = hwnd;
+    flash.dwFlags = FLASHW_TRAY;
+    flash.uCount = 2;
+    flash.dwTimeout = 0;
+    FlashWindowEx(&flash);
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

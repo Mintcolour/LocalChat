@@ -11,6 +11,8 @@ import 'core/formatters.dart';
 import 'core/peer_status.dart';
 import 'data/app_database.dart';
 import 'models/protocol.dart';
+import 'services/file_store.dart';
+import 'ui/attachment_preview.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +54,7 @@ class _LocalChatHomeState extends State<LocalChatHome> {
   bool _dragging = false;
   String? _shownPairRequestId;
   int _shownNotificationSerial = 0;
+  int? _shownAttachmentBatchId;
 
   AppController get controller => widget.controller;
 
@@ -86,6 +89,24 @@ class _LocalChatHomeState extends State<LocalChatHome> {
             ScaffoldMessenger.of(context)
               ..hideCurrentSnackBar()
               ..showSnackBar(SnackBar(content: Text(message)));
+          });
+        }
+        final attachmentBatch = controller.pendingAttachmentBatch;
+        if (attachmentBatch == null) {
+          _shownAttachmentBatchId = null;
+        } else if (_shownAttachmentBatchId != attachmentBatch.id) {
+          _shownAttachmentBatchId = attachmentBatch.id;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                fullscreenDialog: true,
+                builder: (_) => AttachmentPreviewPage(
+                  controller: controller,
+                  batch: attachmentBatch,
+                ),
+              ),
+            );
           });
         }
         return Scaffold(
@@ -380,7 +401,7 @@ class _ChatPane extends StatelessWidget {
           }
         }
         if (files.isNotEmpty) {
-          controller.sendFiles(files);
+          controller.queueFilesForSending(files);
         }
         for (final folder in folders) {
           controller.sendFolder(folder);
@@ -1092,6 +1113,10 @@ class _FileMessage extends StatelessWidget {
     final openTarget =
         transfer?.savedUri ?? transfer?.savedPath ?? message.filePath;
     final saved = transfer?.savedPath != null || transfer?.savedUri != null;
+    final folderTarget = transfer?.savedUri != null && Platform.isAndroid
+        ? null
+        : transfer?.savedPath ?? message.filePath;
+    final canRename = controller.canRenameMessageFile(message, transfer);
     final showProgress =
         progress != null &&
         progress < 1 &&
@@ -1138,11 +1163,24 @@ class _FileMessage extends StatelessWidget {
             ),
             IconButton(
               tooltip: controller.text.openFolder,
-              onPressed: message.filePath == null
+              onPressed: folderTarget == null
                   ? null
-                  : () => controller.openFolder(message.filePath),
+                  : () => controller.openFolder(folderTarget),
               icon: const Icon(Icons.folder_open),
             ),
+            if (canRename)
+              IconButton(
+                tooltip: controller.text.renameFile,
+                onPressed: controller.busy
+                    ? null
+                    : () => _showRenameFileDialog(
+                        context,
+                        controller,
+                        message,
+                        transfer!,
+                      ),
+                icon: const Icon(Icons.drive_file_rename_outline),
+              ),
             IconButton(
               tooltip: controller.text.saveLocal,
               onPressed: saved
@@ -1163,6 +1201,56 @@ class _FileMessage extends StatelessWidget {
         ],
       ],
     );
+  }
+}
+
+Future<void> _showRenameFileDialog(
+  BuildContext context,
+  AppController controller,
+  ChatMessage message,
+  Transfer transfer,
+) async {
+  final formKey = GlobalKey<FormState>();
+  var value = transfer.fileName;
+  final result = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(controller.text.renameFile),
+      content: Form(
+        key: formKey,
+        child: TextFormField(
+          initialValue: value,
+          autofocus: true,
+          decoration: InputDecoration(labelText: controller.text.fileName),
+          onChanged: (text) => value = text,
+          validator: (text) => FileStore.validateFileName(text ?? '') == null
+              ? null
+              : controller.text.invalidFileName,
+          onFieldSubmitted: (_) {
+            if (formKey.currentState?.validate() ?? false) {
+              Navigator.of(context).pop(value);
+            }
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(controller.text.cancel),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (formKey.currentState?.validate() ?? false) {
+              Navigator.of(context).pop(value);
+            }
+          },
+          child: Text(controller.text.save),
+        ),
+      ],
+    ),
+  );
+  if (result != null) {
+    await controller.renameMessageFile(message, transfer, result);
   }
 }
 

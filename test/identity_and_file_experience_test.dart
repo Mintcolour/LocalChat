@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +24,14 @@ void main() {
     expect(isImageFile(mimeType: 'image/png', fileName: 'a.bin'), isTrue);
     expect(isImageFile(fileName: 'photo.webp'), isTrue);
     expect(isImageFile(fileName: 'package.apk'), isFalse);
+  });
+
+  test('files are mapped to stable automatic categories', () {
+    expect(fileCategoryFor(fileName: 'photo.webp'), FileCategory.images);
+    expect(fileCategoryFor(fileName: 'manual.pdf'), FileCategory.documents);
+    expect(fileCategoryFor(fileName: 'bundle.7z'), FileCategory.archives);
+    expect(fileCategoryFor(fileName: 'setup.msi'), FileCategory.apps);
+    expect(fileCategoryFor(fileName: 'unknown.bin'), FileCategory.others);
   });
 
   test('transfer saved location is persisted', () async {
@@ -53,4 +63,87 @@ void main() {
     expect(transfer.savedPath, contains('Downloads'));
     expect(transfer.mimeType, 'application/vnd.android.package-archive');
   });
+
+  test('received file rename updates transfer and message atomically', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final now = DateTime.utc(2026, 6, 22);
+    await db
+        .into(db.chatMessages)
+        .insert(
+          ChatMessagesCompanion.insert(
+            id: 'message-1',
+            conversationId: 'peer:peer-1',
+            peerDeviceId: 'peer-1',
+            direction: 'in',
+            kind: 'file',
+            fileName: const Value('old.pdf'),
+            mimeType: const Value('application/pdf'),
+            status: 'received',
+            transferId: const Value('transfer-1'),
+            createdAt: now,
+          ),
+        );
+    await db
+        .into(db.transfers)
+        .insert(
+          TransfersCompanion.insert(
+            id: 'transfer-1',
+            peerDeviceId: 'peer-1',
+            direction: 'in',
+            fileName: 'old.pdf',
+            fileSize: 10,
+            status: 'received',
+            savedPath: const Value(r'C:\Downloads\old.pdf'),
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+
+    await db.renameReceivedTransfer(
+      transferId: 'transfer-1',
+      fileName: 'new.docx',
+      mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      savedPath: r'C:\Downloads\Documents\new.docx',
+      savedUri: null,
+      relativePath: null,
+    );
+
+    final transfer = (await db.listTransfersByIds(['transfer-1'])).single;
+    final message = (await db.listMessages('peer:peer-1')).single;
+    expect(transfer.fileName, 'new.docx');
+    expect(message.fileName, 'new.docx');
+    expect(transfer.savedPath, contains('Documents'));
+  });
+
+  test(
+    'migration repairs a database whose column exists before version 4',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('localchat-migration');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}${Platform.pathSeparator}localchat.sqlite');
+
+      final original = AppDatabase(NativeDatabase(file));
+      await original.customSelect('SELECT 1').get();
+      await original.customStatement('PRAGMA user_version = 3');
+      await original.close();
+
+      final repaired = AppDatabase(NativeDatabase(file));
+      addTearDown(repaired.close);
+      await repaired.listDevices();
+
+      final version = await repaired
+          .customSelect('PRAGMA user_version')
+          .getSingle();
+      final columns = await repaired
+          .customSelect('PRAGMA table_info("devices")')
+          .get();
+      expect(version.read<int>('user_version'), 4);
+      expect(
+        columns.map((row) => row.read<String>('name')),
+        contains('endpoint_source'),
+      );
+    },
+  );
 }

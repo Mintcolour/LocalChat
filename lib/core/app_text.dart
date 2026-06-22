@@ -77,11 +77,22 @@ class AppText {
   String get openFolder => en ? 'Open folder' : '打开文件夹';
   String get saveLocal => en ? 'Save locally' : '保存到本地';
   String get imageNotSupported => en ? 'Image not supported' : '图片不可预览';
+  String get attachmentPreview => en ? 'Review attachments' : '预览附件';
+  String get editImage => en ? 'Edit image' : '编辑图片';
+  String get edited => en ? 'Edited' : '已编辑';
+  String get animatedImageOriginalOnly => en
+      ? 'Animated or unsupported images are sent unchanged'
+      : '动图或不支持的图片将原样发送';
+  String confirmSend(int count) => en ? 'Send $count items' : '发送 $count 个附件';
+  String get renameFile => en ? 'Rename file' : '重命名文件';
+  String get fileName => en ? 'File name' : '文件名';
+  String get invalidFileName => en
+      ? 'Use a valid file name without reserved characters or trailing spaces.'
+      : '请输入有效文件名，不能包含非法字符、保留名或末尾空格。';
   String get chooseFolder => en ? 'Choose folder' : '选择文件夹';
   String get minimizeToTray => en ? 'Minimize to tray' : '最小化到托盘';
-  String get minimizeToTraySubtitle => en
-      ? 'Keep running in background when window closes'
-      : '关闭窗口时保持后台运行';
+  String get minimizeToTraySubtitle =>
+      en ? 'Keep running in background when window closes' : '关闭窗口时保持后台运行';
   String get startOnBoot => en ? 'Start on boot' : '开机自启';
   String get startOnBootSubtitle => en
       ? 'Launch LocalChat automatically when Windows starts'

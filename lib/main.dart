@@ -164,14 +164,55 @@ class _LocalChatHomeState extends State<LocalChatHome> {
                     showHeader: !narrow,
                   );
                   if (narrow) {
-                    return controller.selectedDevice == null
-                        ? devicePane
-                        : Column(
-                            children: [
-                              _MobilePeerHeader(controller: controller),
-                              Expanded(child: chatPane),
-                            ],
+                    final selectedDevice = controller.selectedDevice;
+                    final page = selectedDevice == null
+                        ? KeyedSubtree(
+                            key: const ValueKey('mobile-device-list'),
+                            child: devicePane,
+                          )
+                        : KeyedSubtree(
+                            key: ValueKey(
+                              'mobile-conversation-${selectedDevice.id}',
+                            ),
+                            child: Column(
+                              children: [
+                                _MobilePeerHeader(controller: controller),
+                                Expanded(child: chatPane),
+                              ],
+                            ),
                           );
+                    return AnimatedSwitcher(
+                      key: const ValueKey('mobile-page-transition'),
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 260),
+                      reverseDuration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        final enteringConversation =
+                            child.key is ValueKey<String> &&
+                            (child.key! as ValueKey<String>).value.startsWith(
+                              'mobile-conversation-',
+                            );
+                        final offset = enteringConversation
+                            ? const Offset(0.08, 0)
+                            : const Offset(-0.04, 0);
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: offset,
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: page,
+                    );
                   }
                   return Row(
                     children: [

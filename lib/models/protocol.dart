@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../core/formatters.dart';
+
 const protocolVersion = 1;
 const discoveryPort = 45871;
 const legacyTransferChunkSize = 256 * 1024;
@@ -11,6 +13,42 @@ const encryptedStreamCapability = 'encrypted_stream_v2';
 const folderCapability = 'folders_v1';
 
 enum PeerPresence { trusted, discovered }
+
+/// 由签名公钥（base64url 字符串）派生指纹：sha256(公钥原始字节) 的十六进制。
+/// 与 [IdentityService] 生成本地身份时的算法一致。
+String fingerprintFromSigningKey(String signingPublicKeyB64) {
+  return sha256Hex(unb64(signingPublicKeyB64));
+}
+
+/// 对端身份自洽性校验失败（设备 ID、签名公钥、指纹三者不一致）。
+/// 计划 P0：拒绝设备 ID、公钥、指纹不一致的数据。
+class PeerIdentityMismatch implements Exception {
+  const PeerIdentityMismatch(this.message);
+  final String message;
+  @override
+  String toString() => 'PeerIdentityMismatch: $message';
+}
+
+/// 校验 [deviceId]、[signingPublicKey]、[fingerprint] 三者自洽：
+/// 指纹必须由签名公钥派生，设备 ID 必须是指纹的前 20 位（与本地身份生成规则一致）。
+/// 任一为空或不一致抛 [PeerIdentityMismatch]。该函数仅在“摄入对端身份”的网络路径
+/// 调用，不影响数据库层的旧测试用例（旧用例直接操作 DB，不经此校验）。
+void validatePeerIdentity({
+  required String deviceId,
+  required String signingPublicKey,
+  required String fingerprint,
+}) {
+  if (deviceId.isEmpty || signingPublicKey.isEmpty || fingerprint.isEmpty) {
+    throw const PeerIdentityMismatch('身份信息不完整');
+  }
+  final derived = fingerprintFromSigningKey(signingPublicKey);
+  if (derived != fingerprint) {
+    throw const PeerIdentityMismatch('指纹与签名公钥不匹配');
+  }
+  if (fingerprint.length < 20 || deviceId != fingerprint.substring(0, 20)) {
+    throw const PeerIdentityMismatch('设备 ID 与指纹不一致');
+  }
+}
 
 class LocalIdentity {
   const LocalIdentity({

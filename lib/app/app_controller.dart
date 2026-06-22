@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/app_text.dart';
+import '../core/app_failure.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
@@ -433,9 +434,11 @@ class AppController extends ChangeNotifier {
           : '${titleFor(peer)} 已发送';
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en'
-          ? '${titleFor(peer)} disconnected, message failed'
-          : '${titleFor(peer)} 连接断开，消息发送失败';
+      status = error is AppFailure
+          ? error.userMessage
+          : (languageCode == 'en'
+                ? '${titleFor(peer)} disconnected, message failed'
+                : '${titleFor(peer)} 连接断开，消息发送失败');
     } finally {
       busy = false;
       notifyListeners();
@@ -565,9 +568,11 @@ class AppController extends ChangeNotifier {
           : '${titleFor(peer)} 文件夹 $rootName 发送完成';
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en'
-          ? '${titleFor(peer)} disconnected, folder transfer failed'
-          : '${titleFor(peer)} 连接断开，文件夹发送失败';
+      status = error is AppFailure
+          ? error.userMessage
+          : (languageCode == 'en'
+                ? '${titleFor(peer)} disconnected, folder transfer failed'
+                : '${titleFor(peer)} 连接断开，文件夹发送失败');
     } finally {
       busy = false;
       notifyListeners();
@@ -594,9 +599,11 @@ class AppController extends ChangeNotifier {
           : '${titleFor(peer)} 文件发送完成';
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en'
-          ? '${titleFor(peer)} disconnected, file transfer failed'
-          : '${titleFor(peer)} 连接断开，文件发送失败';
+      status = error is AppFailure
+          ? error.userMessage
+          : (languageCode == 'en'
+                ? '${titleFor(peer)} disconnected, file transfer failed'
+                : '${titleFor(peer)} 连接断开，文件发送失败');
     } finally {
       busy = false;
       notifyListeners();
@@ -660,7 +667,9 @@ class AppController extends ChangeNotifier {
       status = languageCode == 'en' ? 'Retry succeeded' : '重新发送成功';
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Retry failed' : '重新发送失败';
+      status = error is AppFailure
+          ? error.userMessage
+          : (languageCode == 'en' ? 'Retry failed' : '重新发送失败');
     } finally {
       await refresh();
       busy = false;

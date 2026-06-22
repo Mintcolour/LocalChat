@@ -7,6 +7,7 @@ import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/protocol.dart';
 import 'identity_service.dart';
+import 'nonce_cache.dart';
 
 class EncryptedFileChunk {
   const EncryptedFileChunk({
@@ -31,7 +32,8 @@ class SecurityService {
   final _signing = Ed25519();
   final _exchange = X25519();
   final _cipher = AesGcm.with256bits();
-  final Set<String> _seenNonces = <String>{};
+  // 防重放 nonce 缓存：10 分钟 TTL + 容量上限，替代无界 Set。
+  final NonceCache _seenNonces = NonceCache();
 
   Future<Map<String, Object?>> seal(
     Device peer,
@@ -83,7 +85,7 @@ class SecurityService {
       );
     }
     final nonceKey = '${peer.id}:${envelope.nonce}';
-    if (_seenNonces.contains(nonceKey)) {
+    if (!_seenNonces.register(nonceKey)) {
       throw const FormatException('Envelope nonce was already used.');
     }
     final publicKey = SimplePublicKey(
@@ -95,7 +97,6 @@ class SecurityService {
       signature: Signature(unb64(envelope.signature), publicKey: publicKey),
     );
     if (!ok) throw const FormatException('Envelope signature is invalid.');
-    _seenNonces.add(nonceKey);
     final clear = await _cipher.decrypt(
       SecretBox(
         unb64(envelope.cipherText),
@@ -181,7 +182,7 @@ class SecurityService {
       );
     }
     final nonceKey = 'stream:${peer.id}:$nonce';
-    if (_seenNonces.contains(nonceKey)) {
+    if (!_seenNonces.register(nonceKey)) {
       throw const FormatException('Stream nonce was already used.');
     }
     final publicKey = SimplePublicKey(
@@ -205,7 +206,6 @@ class SecurityService {
     if (!ok) {
       throw const FormatException('Stream signature is invalid.');
     }
-    _seenNonces.add(nonceKey);
   }
 
   Future<SecretKey> _sharedSecret(Device peer) async {

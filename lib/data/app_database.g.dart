@@ -164,6 +164,31 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     requiredDuringInsert: false,
     defaultValue: const Constant('auto'),
   );
+  static const VerificationMeta _capabilitiesMeta = const VerificationMeta(
+    'capabilities',
+  );
+  @override
+  late final GeneratedColumn<String> capabilities = GeneratedColumn<String>(
+    'capabilities',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _identityChangedMeta = const VerificationMeta(
+    'identityChanged',
+  );
+  @override
+  late final GeneratedColumn<bool> identityChanged = GeneratedColumn<bool>(
+    'identity_changed',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("identity_changed" IN (0, 1))',
+    ),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -180,6 +205,8 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
     lastSeen,
     createdAt,
     endpointSource,
+    capabilities,
+    identityChanged,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -306,6 +333,24 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
         ),
       );
     }
+    if (data.containsKey('capabilities')) {
+      context.handle(
+        _capabilitiesMeta,
+        capabilities.isAcceptableOrUnknown(
+          data['capabilities']!,
+          _capabilitiesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('identity_changed')) {
+      context.handle(
+        _identityChangedMeta,
+        identityChanged.isAcceptableOrUnknown(
+          data['identity_changed']!,
+          _identityChangedMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -371,6 +416,14 @@ class $DevicesTable extends Devices with TableInfo<$DevicesTable, Device> {
         DriftSqlType.string,
         data['${effectivePrefix}endpoint_source'],
       )!,
+      capabilities: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}capabilities'],
+      ),
+      identityChanged: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}identity_changed'],
+      ),
     );
   }
 
@@ -395,6 +448,8 @@ class Device extends DataClass implements Insertable<Device> {
   final DateTime? lastSeen;
   final DateTime createdAt;
   final String endpointSource;
+  final String? capabilities;
+  final bool? identityChanged;
   const Device({
     required this.id,
     required this.displayName,
@@ -410,6 +465,8 @@ class Device extends DataClass implements Insertable<Device> {
     this.lastSeen,
     required this.createdAt,
     required this.endpointSource,
+    this.capabilities,
+    this.identityChanged,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -434,6 +491,12 @@ class Device extends DataClass implements Insertable<Device> {
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['endpoint_source'] = Variable<String>(endpointSource);
+    if (!nullToAbsent || capabilities != null) {
+      map['capabilities'] = Variable<String>(capabilities);
+    }
+    if (!nullToAbsent || identityChanged != null) {
+      map['identity_changed'] = Variable<bool>(identityChanged);
+    }
     return map;
   }
 
@@ -455,6 +518,12 @@ class Device extends DataClass implements Insertable<Device> {
           : Value(lastSeen),
       createdAt: Value(createdAt),
       endpointSource: Value(endpointSource),
+      capabilities: capabilities == null && nullToAbsent
+          ? const Value.absent()
+          : Value(capabilities),
+      identityChanged: identityChanged == null && nullToAbsent
+          ? const Value.absent()
+          : Value(identityChanged),
     );
   }
 
@@ -478,6 +547,8 @@ class Device extends DataClass implements Insertable<Device> {
       lastSeen: serializer.fromJson<DateTime?>(json['lastSeen']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       endpointSource: serializer.fromJson<String>(json['endpointSource']),
+      capabilities: serializer.fromJson<String?>(json['capabilities']),
+      identityChanged: serializer.fromJson<bool?>(json['identityChanged']),
     );
   }
   @override
@@ -498,6 +569,8 @@ class Device extends DataClass implements Insertable<Device> {
       'lastSeen': serializer.toJson<DateTime?>(lastSeen),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'endpointSource': serializer.toJson<String>(endpointSource),
+      'capabilities': serializer.toJson<String?>(capabilities),
+      'identityChanged': serializer.toJson<bool?>(identityChanged),
     };
   }
 
@@ -516,6 +589,8 @@ class Device extends DataClass implements Insertable<Device> {
     Value<DateTime?> lastSeen = const Value.absent(),
     DateTime? createdAt,
     String? endpointSource,
+    Value<String?> capabilities = const Value.absent(),
+    Value<bool?> identityChanged = const Value.absent(),
   }) => Device(
     id: id ?? this.id,
     displayName: displayName ?? this.displayName,
@@ -531,6 +606,10 @@ class Device extends DataClass implements Insertable<Device> {
     lastSeen: lastSeen.present ? lastSeen.value : this.lastSeen,
     createdAt: createdAt ?? this.createdAt,
     endpointSource: endpointSource ?? this.endpointSource,
+    capabilities: capabilities.present ? capabilities.value : this.capabilities,
+    identityChanged: identityChanged.present
+        ? identityChanged.value
+        : this.identityChanged,
   );
   Device copyWithCompanion(DevicesCompanion data) {
     return Device(
@@ -562,6 +641,12 @@ class Device extends DataClass implements Insertable<Device> {
       endpointSource: data.endpointSource.present
           ? data.endpointSource.value
           : this.endpointSource,
+      capabilities: data.capabilities.present
+          ? data.capabilities.value
+          : this.capabilities,
+      identityChanged: data.identityChanged.present
+          ? data.identityChanged.value
+          : this.identityChanged,
     );
   }
 
@@ -581,7 +666,9 @@ class Device extends DataClass implements Insertable<Device> {
           ..write('trusted: $trusted, ')
           ..write('lastSeen: $lastSeen, ')
           ..write('createdAt: $createdAt, ')
-          ..write('endpointSource: $endpointSource')
+          ..write('endpointSource: $endpointSource, ')
+          ..write('capabilities: $capabilities, ')
+          ..write('identityChanged: $identityChanged')
           ..write(')'))
         .toString();
   }
@@ -602,6 +689,8 @@ class Device extends DataClass implements Insertable<Device> {
     lastSeen,
     createdAt,
     endpointSource,
+    capabilities,
+    identityChanged,
   );
   @override
   bool operator ==(Object other) =>
@@ -620,7 +709,9 @@ class Device extends DataClass implements Insertable<Device> {
           other.trusted == this.trusted &&
           other.lastSeen == this.lastSeen &&
           other.createdAt == this.createdAt &&
-          other.endpointSource == this.endpointSource);
+          other.endpointSource == this.endpointSource &&
+          other.capabilities == this.capabilities &&
+          other.identityChanged == this.identityChanged);
 }
 
 class DevicesCompanion extends UpdateCompanion<Device> {
@@ -638,6 +729,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
   final Value<DateTime?> lastSeen;
   final Value<DateTime> createdAt;
   final Value<String> endpointSource;
+  final Value<String?> capabilities;
+  final Value<bool?> identityChanged;
   final Value<int> rowid;
   const DevicesCompanion({
     this.id = const Value.absent(),
@@ -654,6 +747,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     this.lastSeen = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.endpointSource = const Value.absent(),
+    this.capabilities = const Value.absent(),
+    this.identityChanged = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DevicesCompanion.insert({
@@ -671,6 +766,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     this.lastSeen = const Value.absent(),
     required DateTime createdAt,
     this.endpointSource = const Value.absent(),
+    this.capabilities = const Value.absent(),
+    this.identityChanged = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        displayName = Value(displayName),
@@ -694,6 +791,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Expression<DateTime>? lastSeen,
     Expression<DateTime>? createdAt,
     Expression<String>? endpointSource,
+    Expression<String>? capabilities,
+    Expression<bool>? identityChanged,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -711,6 +810,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       if (lastSeen != null) 'last_seen': lastSeen,
       if (createdAt != null) 'created_at': createdAt,
       if (endpointSource != null) 'endpoint_source': endpointSource,
+      if (capabilities != null) 'capabilities': capabilities,
+      if (identityChanged != null) 'identity_changed': identityChanged,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -730,6 +831,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     Value<DateTime?>? lastSeen,
     Value<DateTime>? createdAt,
     Value<String>? endpointSource,
+    Value<String?>? capabilities,
+    Value<bool?>? identityChanged,
     Value<int>? rowid,
   }) {
     return DevicesCompanion(
@@ -747,6 +850,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
       lastSeen: lastSeen ?? this.lastSeen,
       createdAt: createdAt ?? this.createdAt,
       endpointSource: endpointSource ?? this.endpointSource,
+      capabilities: capabilities ?? this.capabilities,
+      identityChanged: identityChanged ?? this.identityChanged,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -796,6 +901,12 @@ class DevicesCompanion extends UpdateCompanion<Device> {
     if (endpointSource.present) {
       map['endpoint_source'] = Variable<String>(endpointSource.value);
     }
+    if (capabilities.present) {
+      map['capabilities'] = Variable<String>(capabilities.value);
+    }
+    if (identityChanged.present) {
+      map['identity_changed'] = Variable<bool>(identityChanged.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -819,6 +930,8 @@ class DevicesCompanion extends UpdateCompanion<Device> {
           ..write('lastSeen: $lastSeen, ')
           ..write('createdAt: $createdAt, ')
           ..write('endpointSource: $endpointSource, ')
+          ..write('capabilities: $capabilities, ')
+          ..write('identityChanged: $identityChanged, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -871,8 +984,25 @@ class $ConversationsTable extends Conversations
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _lastReadAtMeta = const VerificationMeta(
+    'lastReadAt',
+  );
   @override
-  List<GeneratedColumn> get $columns => [id, peerDeviceId, title, updatedAt];
+  late final GeneratedColumn<DateTime> lastReadAt = GeneratedColumn<DateTime>(
+    'last_read_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    peerDeviceId,
+    title,
+    updatedAt,
+    lastReadAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -917,6 +1047,15 @@ class $ConversationsTable extends Conversations
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
+    if (data.containsKey('last_read_at')) {
+      context.handle(
+        _lastReadAtMeta,
+        lastReadAt.isAcceptableOrUnknown(
+          data['last_read_at']!,
+          _lastReadAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -942,6 +1081,10 @@ class $ConversationsTable extends Conversations
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       )!,
+      lastReadAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_read_at'],
+      ),
     );
   }
 
@@ -956,11 +1099,13 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String peerDeviceId;
   final String title;
   final DateTime updatedAt;
+  final DateTime? lastReadAt;
   const Conversation({
     required this.id,
     required this.peerDeviceId,
     required this.title,
     required this.updatedAt,
+    this.lastReadAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -969,6 +1114,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     map['peer_device_id'] = Variable<String>(peerDeviceId);
     map['title'] = Variable<String>(title);
     map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || lastReadAt != null) {
+      map['last_read_at'] = Variable<DateTime>(lastReadAt);
+    }
     return map;
   }
 
@@ -978,6 +1126,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       peerDeviceId: Value(peerDeviceId),
       title: Value(title),
       updatedAt: Value(updatedAt),
+      lastReadAt: lastReadAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastReadAt),
     );
   }
 
@@ -991,6 +1142,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       peerDeviceId: serializer.fromJson<String>(json['peerDeviceId']),
       title: serializer.fromJson<String>(json['title']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      lastReadAt: serializer.fromJson<DateTime?>(json['lastReadAt']),
     );
   }
   @override
@@ -1001,6 +1153,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'peerDeviceId': serializer.toJson<String>(peerDeviceId),
       'title': serializer.toJson<String>(title),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'lastReadAt': serializer.toJson<DateTime?>(lastReadAt),
     };
   }
 
@@ -1009,11 +1162,13 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     String? peerDeviceId,
     String? title,
     DateTime? updatedAt,
+    Value<DateTime?> lastReadAt = const Value.absent(),
   }) => Conversation(
     id: id ?? this.id,
     peerDeviceId: peerDeviceId ?? this.peerDeviceId,
     title: title ?? this.title,
     updatedAt: updatedAt ?? this.updatedAt,
+    lastReadAt: lastReadAt.present ? lastReadAt.value : this.lastReadAt,
   );
   Conversation copyWithCompanion(ConversationsCompanion data) {
     return Conversation(
@@ -1023,6 +1178,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           : this.peerDeviceId,
       title: data.title.present ? data.title.value : this.title,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      lastReadAt: data.lastReadAt.present
+          ? data.lastReadAt.value
+          : this.lastReadAt,
     );
   }
 
@@ -1032,13 +1190,15 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('id: $id, ')
           ..write('peerDeviceId: $peerDeviceId, ')
           ..write('title: $title, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('lastReadAt: $lastReadAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, peerDeviceId, title, updatedAt);
+  int get hashCode =>
+      Object.hash(id, peerDeviceId, title, updatedAt, lastReadAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1046,7 +1206,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.id == this.id &&
           other.peerDeviceId == this.peerDeviceId &&
           other.title == this.title &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.lastReadAt == this.lastReadAt);
 }
 
 class ConversationsCompanion extends UpdateCompanion<Conversation> {
@@ -1054,12 +1215,14 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String> peerDeviceId;
   final Value<String> title;
   final Value<DateTime> updatedAt;
+  final Value<DateTime?> lastReadAt;
   final Value<int> rowid;
   const ConversationsCompanion({
     this.id = const Value.absent(),
     this.peerDeviceId = const Value.absent(),
     this.title = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.lastReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ConversationsCompanion.insert({
@@ -1067,6 +1230,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     required String peerDeviceId,
     required String title,
     required DateTime updatedAt,
+    this.lastReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        peerDeviceId = Value(peerDeviceId),
@@ -1077,6 +1241,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? peerDeviceId,
     Expression<String>? title,
     Expression<DateTime>? updatedAt,
+    Expression<DateTime>? lastReadAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1084,6 +1249,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (peerDeviceId != null) 'peer_device_id': peerDeviceId,
       if (title != null) 'title': title,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (lastReadAt != null) 'last_read_at': lastReadAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1093,6 +1259,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Value<String>? peerDeviceId,
     Value<String>? title,
     Value<DateTime>? updatedAt,
+    Value<DateTime?>? lastReadAt,
     Value<int>? rowid,
   }) {
     return ConversationsCompanion(
@@ -1100,6 +1267,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       peerDeviceId: peerDeviceId ?? this.peerDeviceId,
       title: title ?? this.title,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastReadAt: lastReadAt ?? this.lastReadAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1119,6 +1287,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (lastReadAt.present) {
+      map['last_read_at'] = Variable<DateTime>(lastReadAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1132,6 +1303,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('peerDeviceId: $peerDeviceId, ')
           ..write('title: $title, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('lastReadAt: $lastReadAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2110,6 +2282,28 @@ class $TransfersTable extends Transfers
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _groupIdMeta = const VerificationMeta(
+    'groupId',
+  );
+  @override
+  late final GeneratedColumn<String> groupId = GeneratedColumn<String>(
+    'group_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _errorCodeMeta = const VerificationMeta(
+    'errorCode',
+  );
+  @override
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -2148,6 +2342,8 @@ class $TransfersTable extends Transfers
     receivedBytes,
     totalChunks,
     relativePath,
+    groupId,
+    errorCode,
     createdAt,
     updatedAt,
   ];
@@ -2268,6 +2464,18 @@ class $TransfersTable extends Transfers
         ),
       );
     }
+    if (data.containsKey('group_id')) {
+      context.handle(
+        _groupIdMeta,
+        groupId.isAcceptableOrUnknown(data['group_id']!, _groupIdMeta),
+      );
+    }
+    if (data.containsKey('error_code')) {
+      context.handle(
+        _errorCodeMeta,
+        errorCode.isAcceptableOrUnknown(data['error_code']!, _errorCodeMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -2349,6 +2557,14 @@ class $TransfersTable extends Transfers
         DriftSqlType.string,
         data['${effectivePrefix}relative_path'],
       ),
+      groupId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}group_id'],
+      ),
+      errorCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_code'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -2381,6 +2597,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
   final int receivedBytes;
   final int totalChunks;
   final String? relativePath;
+  final String? groupId;
+  final String? errorCode;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Transfer({
@@ -2398,6 +2616,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     required this.receivedBytes,
     required this.totalChunks,
     this.relativePath,
+    this.groupId,
+    this.errorCode,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -2429,6 +2649,12 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     map['total_chunks'] = Variable<int>(totalChunks);
     if (!nullToAbsent || relativePath != null) {
       map['relative_path'] = Variable<String>(relativePath);
+    }
+    if (!nullToAbsent || groupId != null) {
+      map['group_id'] = Variable<String>(groupId);
+    }
+    if (!nullToAbsent || errorCode != null) {
+      map['error_code'] = Variable<String>(errorCode);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -2463,6 +2689,12 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       relativePath: relativePath == null && nullToAbsent
           ? const Value.absent()
           : Value(relativePath),
+      groupId: groupId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(groupId),
+      errorCode: errorCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorCode),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -2488,6 +2720,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       receivedBytes: serializer.fromJson<int>(json['receivedBytes']),
       totalChunks: serializer.fromJson<int>(json['totalChunks']),
       relativePath: serializer.fromJson<String?>(json['relativePath']),
+      groupId: serializer.fromJson<String?>(json['groupId']),
+      errorCode: serializer.fromJson<String?>(json['errorCode']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -2510,6 +2744,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       'receivedBytes': serializer.toJson<int>(receivedBytes),
       'totalChunks': serializer.toJson<int>(totalChunks),
       'relativePath': serializer.toJson<String?>(relativePath),
+      'groupId': serializer.toJson<String?>(groupId),
+      'errorCode': serializer.toJson<String?>(errorCode),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -2530,6 +2766,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     int? receivedBytes,
     int? totalChunks,
     Value<String?> relativePath = const Value.absent(),
+    Value<String?> groupId = const Value.absent(),
+    Value<String?> errorCode = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Transfer(
@@ -2547,6 +2785,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     receivedBytes: receivedBytes ?? this.receivedBytes,
     totalChunks: totalChunks ?? this.totalChunks,
     relativePath: relativePath.present ? relativePath.value : this.relativePath,
+    groupId: groupId.present ? groupId.value : this.groupId,
+    errorCode: errorCode.present ? errorCode.value : this.errorCode,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -2574,6 +2814,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       relativePath: data.relativePath.present
           ? data.relativePath.value
           : this.relativePath,
+      groupId: data.groupId.present ? data.groupId.value : this.groupId,
+      errorCode: data.errorCode.present ? data.errorCode.value : this.errorCode,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -2596,6 +2838,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
           ..write('relativePath: $relativePath, ')
+          ..write('groupId: $groupId, ')
+          ..write('errorCode: $errorCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -2618,6 +2862,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     receivedBytes,
     totalChunks,
     relativePath,
+    groupId,
+    errorCode,
     createdAt,
     updatedAt,
   );
@@ -2639,6 +2885,8 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           other.receivedBytes == this.receivedBytes &&
           other.totalChunks == this.totalChunks &&
           other.relativePath == this.relativePath &&
+          other.groupId == this.groupId &&
+          other.errorCode == this.errorCode &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -2658,6 +2906,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
   final Value<int> receivedBytes;
   final Value<int> totalChunks;
   final Value<String?> relativePath;
+  final Value<String?> groupId;
+  final Value<String?> errorCode;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -2676,6 +2926,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
     this.relativePath = const Value.absent(),
+    this.groupId = const Value.absent(),
+    this.errorCode = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -2695,6 +2947,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.receivedBytes = const Value.absent(),
     this.totalChunks = const Value.absent(),
     this.relativePath = const Value.absent(),
+    this.groupId = const Value.absent(),
+    this.errorCode = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
@@ -2721,6 +2975,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Expression<int>? receivedBytes,
     Expression<int>? totalChunks,
     Expression<String>? relativePath,
+    Expression<String>? groupId,
+    Expression<String>? errorCode,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
@@ -2740,6 +2996,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       if (receivedBytes != null) 'received_bytes': receivedBytes,
       if (totalChunks != null) 'total_chunks': totalChunks,
       if (relativePath != null) 'relative_path': relativePath,
+      if (groupId != null) 'group_id': groupId,
+      if (errorCode != null) 'error_code': errorCode,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -2761,6 +3019,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Value<int>? receivedBytes,
     Value<int>? totalChunks,
     Value<String?>? relativePath,
+    Value<String?>? groupId,
+    Value<String?>? errorCode,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -2780,6 +3040,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       receivedBytes: receivedBytes ?? this.receivedBytes,
       totalChunks: totalChunks ?? this.totalChunks,
       relativePath: relativePath ?? this.relativePath,
+      groupId: groupId ?? this.groupId,
+      errorCode: errorCode ?? this.errorCode,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -2831,6 +3093,12 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     if (relativePath.present) {
       map['relative_path'] = Variable<String>(relativePath.value);
     }
+    if (groupId.present) {
+      map['group_id'] = Variable<String>(groupId.value);
+    }
+    if (errorCode.present) {
+      map['error_code'] = Variable<String>(errorCode.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -2860,6 +3128,8 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
           ..write('receivedBytes: $receivedBytes, ')
           ..write('totalChunks: $totalChunks, ')
           ..write('relativePath: $relativePath, ')
+          ..write('groupId: $groupId, ')
+          ..write('errorCode: $errorCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -3110,6 +3380,8 @@ typedef $$DevicesTableCreateCompanionBuilder =
       Value<DateTime?> lastSeen,
       required DateTime createdAt,
       Value<String> endpointSource,
+      Value<String?> capabilities,
+      Value<bool?> identityChanged,
       Value<int> rowid,
     });
 typedef $$DevicesTableUpdateCompanionBuilder =
@@ -3128,6 +3400,8 @@ typedef $$DevicesTableUpdateCompanionBuilder =
       Value<DateTime?> lastSeen,
       Value<DateTime> createdAt,
       Value<String> endpointSource,
+      Value<String?> capabilities,
+      Value<bool?> identityChanged,
       Value<int> rowid,
     });
 
@@ -3207,6 +3481,16 @@ class $$DevicesTableFilterComposer
 
   ColumnFilters<String> get endpointSource => $composableBuilder(
     column: $table.endpointSource,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get capabilities => $composableBuilder(
+    column: $table.capabilities,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get identityChanged => $composableBuilder(
+    column: $table.identityChanged,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3289,6 +3573,16 @@ class $$DevicesTableOrderingComposer
     column: $table.endpointSource,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get capabilities => $composableBuilder(
+    column: $table.capabilities,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get identityChanged => $composableBuilder(
+    column: $table.identityChanged,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$DevicesTableAnnotationComposer
@@ -3355,6 +3649,16 @@ class $$DevicesTableAnnotationComposer
     column: $table.endpointSource,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get capabilities => $composableBuilder(
+    column: $table.capabilities,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get identityChanged => $composableBuilder(
+    column: $table.identityChanged,
+    builder: (column) => column,
+  );
 }
 
 class $$DevicesTableTableManager
@@ -3399,6 +3703,8 @@ class $$DevicesTableTableManager
                 Value<DateTime?> lastSeen = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<String> endpointSource = const Value.absent(),
+                Value<String?> capabilities = const Value.absent(),
+                Value<bool?> identityChanged = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DevicesCompanion(
                 id: id,
@@ -3415,6 +3721,8 @@ class $$DevicesTableTableManager
                 lastSeen: lastSeen,
                 createdAt: createdAt,
                 endpointSource: endpointSource,
+                capabilities: capabilities,
+                identityChanged: identityChanged,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3433,6 +3741,8 @@ class $$DevicesTableTableManager
                 Value<DateTime?> lastSeen = const Value.absent(),
                 required DateTime createdAt,
                 Value<String> endpointSource = const Value.absent(),
+                Value<String?> capabilities = const Value.absent(),
+                Value<bool?> identityChanged = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DevicesCompanion.insert(
                 id: id,
@@ -3449,6 +3759,8 @@ class $$DevicesTableTableManager
                 lastSeen: lastSeen,
                 createdAt: createdAt,
                 endpointSource: endpointSource,
+                capabilities: capabilities,
+                identityChanged: identityChanged,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -3479,6 +3791,7 @@ typedef $$ConversationsTableCreateCompanionBuilder =
       required String peerDeviceId,
       required String title,
       required DateTime updatedAt,
+      Value<DateTime?> lastReadAt,
       Value<int> rowid,
     });
 typedef $$ConversationsTableUpdateCompanionBuilder =
@@ -3487,6 +3800,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder =
       Value<String> peerDeviceId,
       Value<String> title,
       Value<DateTime> updatedAt,
+      Value<DateTime?> lastReadAt,
       Value<int> rowid,
     });
 
@@ -3516,6 +3830,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastReadAt => $composableBuilder(
+    column: $table.lastReadAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3548,6 +3867,11 @@ class $$ConversationsTableOrderingComposer
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<DateTime> get lastReadAt => $composableBuilder(
+    column: $table.lastReadAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ConversationsTableAnnotationComposer
@@ -3572,6 +3896,11 @@ class $$ConversationsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastReadAt => $composableBuilder(
+    column: $table.lastReadAt,
+    builder: (column) => column,
+  );
 }
 
 class $$ConversationsTableTableManager
@@ -3609,12 +3938,14 @@ class $$ConversationsTableTableManager
                 Value<String> peerDeviceId = const Value.absent(),
                 Value<String> title = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<DateTime?> lastReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ConversationsCompanion(
                 id: id,
                 peerDeviceId: peerDeviceId,
                 title: title,
                 updatedAt: updatedAt,
+                lastReadAt: lastReadAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3623,12 +3954,14 @@ class $$ConversationsTableTableManager
                 required String peerDeviceId,
                 required String title,
                 required DateTime updatedAt,
+                Value<DateTime?> lastReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ConversationsCompanion.insert(
                 id: id,
                 peerDeviceId: peerDeviceId,
                 title: title,
                 updatedAt: updatedAt,
+                lastReadAt: lastReadAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -4051,6 +4384,8 @@ typedef $$TransfersTableCreateCompanionBuilder =
       Value<int> receivedBytes,
       Value<int> totalChunks,
       Value<String?> relativePath,
+      Value<String?> groupId,
+      Value<String?> errorCode,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<int> rowid,
@@ -4071,6 +4406,8 @@ typedef $$TransfersTableUpdateCompanionBuilder =
       Value<int> receivedBytes,
       Value<int> totalChunks,
       Value<String?> relativePath,
+      Value<String?> groupId,
+      Value<String?> errorCode,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -4152,6 +4489,16 @@ class $$TransfersTableFilterComposer
 
   ColumnFilters<String> get relativePath => $composableBuilder(
     column: $table.relativePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get groupId => $composableBuilder(
+    column: $table.groupId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4245,6 +4592,16 @@ class $$TransfersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get groupId => $composableBuilder(
+    column: $table.groupId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -4315,6 +4672,12 @@ class $$TransfersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get groupId =>
+      $composableBuilder(column: $table.groupId, builder: (column) => column);
+
+  GeneratedColumn<String> get errorCode =>
+      $composableBuilder(column: $table.errorCode, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -4364,6 +4727,8 @@ class $$TransfersTableTableManager
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
                 Value<String?> relativePath = const Value.absent(),
+                Value<String?> groupId = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -4382,6 +4747,8 @@ class $$TransfersTableTableManager
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,
                 relativePath: relativePath,
+                groupId: groupId,
+                errorCode: errorCode,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -4402,6 +4769,8 @@ class $$TransfersTableTableManager
                 Value<int> receivedBytes = const Value.absent(),
                 Value<int> totalChunks = const Value.absent(),
                 Value<String?> relativePath = const Value.absent(),
+                Value<String?> groupId = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -4420,6 +4789,8 @@ class $$TransfersTableTableManager
                 receivedBytes: receivedBytes,
                 totalChunks: totalChunks,
                 relativePath: relativePath,
+                groupId: groupId,
+                errorCode: errorCode,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,

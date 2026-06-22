@@ -140,13 +140,44 @@ void main() {
       final columns = await repaired
           .customSelect('PRAGMA table_info("devices")')
           .get();
-      expect(version.read<int>('user_version'), 4);
+      expect(version.read<int>('user_version'), 5);
       expect(
         columns.map((row) => row.read<String>('name')),
         contains('endpoint_source'),
       );
+      expect(
+        columns.map((row) => row.read<String>('name')),
+        containsAll(<String>['capabilities', 'identity_changed']),
+      );
+      final transferColumns = await repaired
+          .customSelect('PRAGMA table_info("transfers")')
+          .get();
+      expect(
+        transferColumns.map((row) => row.read<String>('name')),
+        containsAll(<String>['group_id', 'error_code']),
+      );
+      final conversationColumns = await repaired
+          .customSelect('PRAGMA table_info("conversations")')
+          .get();
+      expect(
+        conversationColumns.map((row) => row.read<String>('name')),
+        contains('last_read_at'),
+      );
     },
   );
+
+  test('v5 indexes are created on fresh databases', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.listDevices();
+    final indexes = await db
+        .customSelect('PRAGMA index_list("chat_messages")')
+        .get();
+    expect(
+      indexes.map((row) => row.read<String>('name')),
+      contains('idx_chat_messages_conversation_created'),
+    );
+  });
 
   test('theme mode preference is persisted', () async {
     final db = AppDatabase(NativeDatabase.memory());

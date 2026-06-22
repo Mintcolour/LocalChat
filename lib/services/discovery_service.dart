@@ -81,6 +81,16 @@ class DiscoveryService {
             peer.deviceId == _identityService.identity.deviceId) {
           continue;
         }
+        // 摄入对端身份前先校验设备 ID / 公钥 / 指纹自洽，拒绝不一致的发现包。
+        try {
+          validatePeerIdentity(
+            deviceId: peer.deviceId,
+            signingPublicKey: peer.signingPublicKey,
+            fingerprint: peer.fingerprint,
+          );
+        } catch (_) {
+          continue;
+        }
         await _db.upsertDiscoveredDevice(
           id: peer.deviceId,
           displayName: peer.displayName,
@@ -92,6 +102,7 @@ class DiscoveryService {
           fingerprint: peer.fingerprint,
           avatarSeed: peer.avatarSeed,
           avatarColor: peer.avatarColor,
+          capabilities: peer.capabilities,
         );
         _peers.add(peer);
       }

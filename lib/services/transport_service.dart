@@ -14,6 +14,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_failure.dart';
 import '../core/formatters.dart';
 import '../core/device_profile.dart';
 import '../data/app_database.dart';
@@ -148,19 +149,36 @@ class TransportService {
     final fingerprint = _string(body['public_key_fingerprint'], '');
     final avatarSeed = _string(body['avatar_seed'], fingerprint);
     final avatarColor = _string(body['avatar_color'], '#2563EB');
+    final signingPublicKey = _string(body['signing_public_key'], '');
+    final exchangePublicKey = _string(body['exchange_public_key'], '');
+    // 摄入对端身份前校验自洽：拒绝设备 ID / 公钥 / 指纹不一致的配对请求。
+    try {
+      validatePeerIdentity(
+        deviceId: deviceId,
+        signingPublicKey: signingPublicKey,
+        fingerprint: fingerprint,
+      );
+    } catch (_) {
+      return Response.badRequest(body: 'Inconsistent peer identity');
+    }
     await _db.upsertDiscoveredDevice(
       id: deviceId,
       displayName: displayName,
       platform: _string(body['platform'], 'unknown'),
       host: host,
       port: port,
-      signingPublicKey: _string(body['signing_public_key'], ''),
-      exchangePublicKey: _string(body['exchange_public_key'], ''),
+      signingPublicKey: signingPublicKey,
+      exchangePublicKey: exchangePublicKey,
       fingerprint: fingerprint,
       avatarSeed: avatarSeed,
       avatarColor: avatarColor,
+      capabilities: _capabilitiesFrom(body['capabilities']),
     );
     final existing = await _db.getDevice(deviceId);
+    // 已信任设备若身份公钥发生变化，拒绝继续配对，要求删除后重新配对（P0）。
+    if (existing?.trusted == true && existing?.identityChanged == true) {
+      return _json({'accepted': false, 'reason': 'identity_changed'});
+    }
     var approved = existing?.trusted == true;
     if (!approved) {
       final requestId = _uuid.v4();
@@ -201,11 +219,12 @@ class TransportService {
       platform: _string(body['platform'], 'unknown'),
       host: host,
       port: port,
-      signingPublicKey: _string(body['signing_public_key'], ''),
-      exchangePublicKey: _string(body['exchange_public_key'], ''),
+      signingPublicKey: signingPublicKey,
+      exchangePublicKey: exchangePublicKey,
       fingerprint: fingerprint,
       avatarSeed: avatarSeed,
       avatarColor: avatarColor,
+      capabilities: _capabilitiesFrom(body['capabilities']),
     );
     final identity = _identityService.identity;
     _updates.add(null);
@@ -222,6 +241,14 @@ class TransportService {
       'nickname': identity.displayName,
       'avatar_seed': identity.avatarSeed,
       'avatar_color': identity.avatarColor,
+      'capabilities': [
+        'text',
+        'files',
+        'pairing',
+        'encrypted_chunks',
+        encryptedStreamCapability,
+        folderCapability,
+      ],
     });
   }
 
@@ -259,8 +286,32 @@ class TransportService {
       peer.fingerprint,
     );
     final avatarSeed = _string(data['avatar_seed'], fingerprint);
+    final trustedDeviceId = _string(data['device_id'], peer.id);
+    final trustedSigningKey = _string(
+      data['signing_public_key'],
+      peer.signingPublicKey,
+    );
+    final trustedExchangeKey = _string(
+      data['exchange_public_key'],
+      peer.exchangePublicKey,
+    );
+    // 配对响应里若带齐身份三元组则校验自洽，拒绝不一致的对端。
+    if (trustedSigningKey.isNotEmpty &&
+        trustedExchangeKey.isNotEmpty &&
+        fingerprint.isNotEmpty &&
+        data['device_id'] is String) {
+      try {
+        validatePeerIdentity(
+          deviceId: trustedDeviceId,
+          signingPublicKey: trustedSigningKey,
+          fingerprint: fingerprint,
+        );
+      } catch (_) {
+        throw StateError('Pairing response identity is inconsistent.');
+      }
+    }
     await _db.trustDevice(
-      id: _string(data['device_id'], peer.id),
+      id: trustedDeviceId,
       displayName: _string(
         data['nickname'],
         _string(data['display_name'], peer.displayName),
@@ -268,17 +319,12 @@ class TransportService {
       platform: _string(data['platform'], peer.platform),
       host: peer.host!,
       port: peer.port!,
-      signingPublicKey: _string(
-        data['signing_public_key'],
-        peer.signingPublicKey,
-      ),
-      exchangePublicKey: _string(
-        data['exchange_public_key'],
-        peer.exchangePublicKey,
-      ),
+      signingPublicKey: trustedSigningKey,
+      exchangePublicKey: trustedExchangeKey,
       fingerprint: fingerprint,
       avatarSeed: avatarSeed,
       avatarColor: _string(data['avatar_color'], peer.avatarColor),
+      capabilities: _capabilitiesFrom(data['capabilities']),
     );
     _updates.add(null);
   }
@@ -302,6 +348,18 @@ class TransportService {
           : port;
       final fingerprint = _string(data['public_key_fingerprint'], '');
       final avatarSeed = _string(data['avatar_seed'], fingerprint);
+      final signingPublicKey = _string(data['signing_public_key'], '');
+      final exchangePublicKey = _string(data['exchange_public_key'], '');
+      // 校验对端身份自洽：拒绝 ID / 公钥 / 指纹不一致的设备。
+      try {
+        validatePeerIdentity(
+          deviceId: deviceId,
+          signingPublicKey: signingPublicKey,
+          fingerprint: fingerprint,
+        );
+      } catch (_) {
+        return null;
+      }
       await _db.upsertManualDevice(
         id: deviceId,
         displayName: _string(
@@ -311,11 +369,12 @@ class TransportService {
         platform: _string(data['platform'], 'unknown'),
         host: host,
         port: listenPort > 0 ? listenPort : port,
-        signingPublicKey: _string(data['signing_public_key'], ''),
-        exchangePublicKey: _string(data['exchange_public_key'], ''),
+        signingPublicKey: signingPublicKey,
+        exchangePublicKey: exchangePublicKey,
         fingerprint: fingerprint,
         avatarSeed: avatarSeed,
         avatarColor: _string(data['avatar_color'], avatarColorFor(avatarSeed)),
+        capabilities: _capabilitiesFrom(data['capabilities']),
       );
       _updates.add(null);
       return _db.getDevice(deviceId);
@@ -343,7 +402,34 @@ class TransportService {
         data['public_key_fingerprint'],
         current.fingerprint,
       );
-      await _db.trustDevice(
+      final signingPublicKey = _string(
+        data['signing_public_key'],
+        current.signingPublicKey,
+      );
+      final exchangePublicKey = _string(
+        data['exchange_public_key'],
+        current.exchangePublicKey,
+      );
+      // 已信任设备：用 upsertDiscoveredDevice 而非 trustDevice 刷新，确保签名/交换
+      // 公钥与指纹被固定、不被 /v1/hello 静默覆盖；公钥变化时由 DB 标记
+      // identity_changed（P0）。仅当 hello 自报的三元组完整时才做自洽校验。
+      if (signingPublicKey.isNotEmpty &&
+          exchangePublicKey.isNotEmpty &&
+          fingerprint.isNotEmpty &&
+          data['device_id'] is String) {
+        try {
+          validatePeerIdentity(
+            deviceId: data['device_id'] as String,
+            signingPublicKey: signingPublicKey,
+            fingerprint: fingerprint,
+          );
+        } catch (_) {
+          await _db.markDeviceOffline(current.id);
+          _updates.add(null);
+          return false;
+        }
+      }
+      await _db.upsertDiscoveredDevice(
         id: current.id,
         displayName: _string(
           data['nickname'],
@@ -354,17 +440,12 @@ class TransportService {
         port: _int(data['listen_port']) > 0
             ? _int(data['listen_port'])
             : current.port!,
-        signingPublicKey: _string(
-          data['signing_public_key'],
-          current.signingPublicKey,
-        ),
-        exchangePublicKey: _string(
-          data['exchange_public_key'],
-          current.exchangePublicKey,
-        ),
+        signingPublicKey: signingPublicKey,
+        exchangePublicKey: exchangePublicKey,
         fingerprint: fingerprint,
         avatarSeed: _string(data['avatar_seed'], current.avatarSeed),
         avatarColor: _string(data['avatar_color'], current.avatarColor),
+        capabilities: _capabilitiesFrom(data['capabilities']),
       );
       _updates.add(null);
       return true;
@@ -377,6 +458,7 @@ class TransportService {
 
   Future<void> sendText(Device peer, String text) async {
     final currentPeer = await _freshPeer(peer);
+    _requireIdentityUnchanged(currentPeer);
     final conversation = await _db.ensureConversation(currentPeer);
     final messageId = _uuid.v4();
     await _db.addMessage(
@@ -434,6 +516,7 @@ class TransportService {
     final body = message.body;
     if (message.direction != 'out' || body == null || body.isEmpty) return;
     var targetPeer = await _freshPeer(peer);
+    _requireIdentityUnchanged(targetPeer);
     await _setMessageStatus(message.id, 'sending');
     _updates.add(null);
     try {
@@ -479,6 +562,7 @@ class TransportService {
       throw FileSystemException('Source file no longer exists', path);
     }
     final currentPeer = await _freshPeer(peer);
+    _requireIdentityUnchanged(currentPeer);
     final length = await file.length();
     final retryTransferId = _uuid.v4();
     final totalChunks = length == 0
@@ -568,6 +652,7 @@ class TransportService {
 
   Future<void> _sendFile(Device peer, File file, {String? relativePath}) async {
     final currentPeer = await _freshPeer(peer);
+    _requireIdentityUnchanged(currentPeer);
     final length = await file.length();
     final transferId = _uuid.v4();
     final conversation = await _db.ensureConversation(currentPeer);
@@ -1207,6 +1292,25 @@ class TransportService {
 
   Future<Device> _freshPeer(Device peer) async {
     return await _db.getDevice(peer.id) ?? peer;
+  }
+
+  /// 发送前置守卫：已信任设备的身份公钥/指纹发生变化（identity_changed）时禁止
+  /// 发送，要求用户删除后重新配对（计划 P0）。在所有出站发送路径调用。
+  void _requireIdentityUnchanged(Device peer) {
+    if (peer.identityChanged == true) {
+      throw AppFailure(
+        code: 'peer_identity_changed',
+        userMessage: languageCode == 'en'
+            ? "This device's identity has changed. Delete it and re-pair to continue."
+            : '该设备身份已变化，请删除后重新配对后再发送',
+      );
+    }
+  }
+
+  /// 从 hello / pair 响应体里解析对端能力列表。
+  List<String> _capabilitiesFrom(Object? raw) {
+    if (raw is List) return raw.whereType<String>().toList();
+    return const <String>[];
   }
 
   String? _remoteHost(Request request) {

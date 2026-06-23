@@ -28,7 +28,12 @@ void main() {
 
   tearDown(() => db.close());
 
-  Future<void> seedMessage(String id, {required DateTime at, String? body, String? fileName}) async {
+  Future<void> seedMessage(
+    String id, {
+    required DateTime at,
+    String? body,
+    String? fileName,
+  }) async {
     await db.addMessage(
       ChatMessagesCompanion.insert(
         id: id,
@@ -44,29 +49,39 @@ void main() {
     );
   }
 
-  test('listMessagesPage returns latest page in ascending order with hasMore flag', () async {
-    final base = DateTime.utc(2026, 6, 22, 10);
-    for (var i = 0; i < 70; i++) {
-      await seedMessage('m$i', at: base.add(Duration(seconds: i)), body: 'msg $i');
-    }
-    final firstPage = await db.listMessagesPage(conversationId: 'peer:peer-1', limit: 50);
-    // 升序，且第一页只返回 50 条（最新 50）。
-    expect(firstPage.length, 50);
-    expect(firstPage.first.id, 'm20');
-    expect(firstPage.last.id, 'm69');
+  test(
+    'listMessagesPage returns latest page in ascending order with hasMore flag',
+    () async {
+      final base = DateTime.utc(2026, 6, 22, 10);
+      for (var i = 0; i < 70; i++) {
+        await seedMessage(
+          'm$i',
+          at: base.add(Duration(seconds: i)),
+          body: 'msg $i',
+        );
+      }
+      final firstPage = await db.listMessagesPage(
+        conversationId: 'peer:peer-1',
+        limit: 50,
+      );
+      // 升序，且第一页只返回 50 条（最新 50）。
+      expect(firstPage.length, 50);
+      expect(firstPage.first.id, 'm20');
+      expect(firstPage.last.id, 'm69');
 
-    // 向前翻页取下一组 50（应剩 20 条）。
-    final oldest = firstPage.first;
-    final secondPage = await db.listMessagesPage(
-      conversationId: 'peer:peer-1',
-      limit: 50,
-      beforeCreatedAt: oldest.createdAt,
-      beforeId: oldest.id,
-    );
-    expect(secondPage.length, 20);
-    expect(secondPage.first.id, 'm0');
-    expect(secondPage.last.id, 'm19');
-  });
+      // 向前翻页取下一组 50（应剩 20 条）。
+      final oldest = firstPage.first;
+      final secondPage = await db.listMessagesPage(
+        conversationId: 'peer:peer-1',
+        limit: 50,
+        beforeCreatedAt: oldest.createdAt,
+        beforeId: oldest.id,
+      );
+      expect(secondPage.length, 20);
+      expect(secondPage.first.id, 'm0');
+      expect(secondPage.last.id, 'm19');
+    },
+  );
 
   test('unreadCount counts inbound messages after lastReadAt', () async {
     final t0 = DateTime.utc(2026, 6, 22, 10);
@@ -79,19 +94,52 @@ void main() {
     await db.markConversationRead(conversation!.id);
     final read = await db.getConversationForDevice('peer-1');
     // markConversationRead 把 lastReadAt 设为 now，此后没有更新的入站消息 → 未读 0。
-    expect(await db.unreadCount('peer:peer-1', lastReadAt: read!.lastReadAt), 0);
+    expect(
+      await db.unreadCount('peer:peer-1', lastReadAt: read!.lastReadAt),
+      0,
+    );
   });
 
   test('searchMessages matches body or file name, capped at 100', () async {
     final t0 = DateTime.utc(2026, 6, 22, 10);
     await seedMessage('s1', at: t0, body: '请查看 report 最终版');
-    await seedMessage('s2', at: t0.add(const Duration(seconds: 1)), fileName: 'report.pdf');
-    await seedMessage('s3', at: t0.add(const Duration(seconds: 2)), body: '无关内容');
+    await seedMessage(
+      's2',
+      at: t0.add(const Duration(seconds: 1)),
+      fileName: 'report.pdf',
+    );
+    await seedMessage(
+      's3',
+      at: t0.add(const Duration(seconds: 2)),
+      body: '无关内容',
+    );
 
     final results = await db.searchMessages('peer:peer-1', 'report');
     expect(results.map((m) => m.id), containsAll(const ['s1', 's2']));
     expect(results.any((m) => m.id == 's3'), isFalse);
   });
+
+  test(
+    'listMessagesPageEndingAt loads the page containing an old search hit',
+    () async {
+      final base = DateTime.utc(2026, 6, 22, 10);
+      for (var i = 0; i < 120; i++) {
+        await seedMessage(
+          'history-$i',
+          at: base.add(Duration(seconds: i)),
+          body: i == 12 ? 'needle' : 'message $i',
+        );
+      }
+      final hit = (await db.searchMessages('peer:peer-1', 'needle')).single;
+      final page = await db.listMessagesPageEndingAt(
+        conversationId: 'peer:peer-1',
+        createdAt: hit.createdAt,
+        id: hit.id,
+      );
+      expect(page.last.id, hit.id);
+      expect(page.any((message) => message.id == hit.id), isTrue);
+    },
+  );
 
   group('formatters', () {
     test('chat date separator handles today/yesterday/weekday/absolute', () {

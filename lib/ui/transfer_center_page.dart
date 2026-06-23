@@ -30,7 +30,10 @@ class _TransferCenterPageState extends State<TransferCenterPage> {
     widget.controller.addListener(_onControllerChanged);
     _reload();
     // 实时刷新进度与速度（内存态统计每 ~500ms 变化）。
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) => _reload());
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _reload(),
+    );
   }
 
   @override
@@ -54,11 +57,15 @@ class _TransferCenterPageState extends State<TransferCenterPage> {
   @override
   Widget build(BuildContext context) {
     final text = widget.controller.text;
-    final active = _groups.where((g) => g.groupKind == TransferGroupKind.active).toList();
+    final active = _groups
+        .where((g) => g.groupKind == TransferGroupKind.active)
+        .toList();
     final completed = _groups
         .where((g) => g.groupKind == TransferGroupKind.completed)
         .toList();
-    final failed = _groups.where((g) => g.groupKind == TransferGroupKind.failed).toList();
+    final failed = _groups
+        .where((g) => g.groupKind == TransferGroupKind.failed)
+        .toList();
 
     return Scaffold(
       appBar: AppBar(title: Text(text.transferCenter)),
@@ -114,8 +121,8 @@ class _Section extends StatelessWidget {
           child: Text(
             '$title（${groups.length}）',
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+              color: Theme.of(context).colorScheme.primary,
+            ),
           ),
         ),
         for (final group in groups)
@@ -136,6 +143,22 @@ class _TransferGroupCard extends StatelessWidget {
     final text = controller.text;
     final isMulti = group.tasks.length > 1;
     final isActive = group.groupKind == TransferGroupKind.active;
+    final outboundActive = group.tasks
+        .where(
+          (task) =>
+              task.transfer.direction == 'out' &&
+              task.groupKind == TransferGroupKind.active,
+        )
+        .toList();
+    final canCancelGroup =
+        outboundActive.isNotEmpty &&
+        outboundActive.every((task) {
+          if (task.transfer.status == 'queued') return true;
+          final peer = controller.devices
+              .where((device) => device.id == task.transfer.peerDeviceId)
+              .firstOrNull;
+          return peer != null && controller.peerSupportsCancel(peer);
+        });
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
@@ -155,11 +178,13 @@ class _TransferGroupCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                if (isActive)
+                if (isActive && outboundActive.isNotEmpty)
                   IconButton(
                     tooltip: text.cancelGroup,
                     icon: const Icon(Icons.cancel_outlined, size: 20),
-                    onPressed: () => controller.cancelTransferGroup(group.groupId),
+                    onPressed: canCancelGroup
+                        ? () => controller.cancelTransferGroup(group.groupId)
+                        : null,
                   ),
               ],
             ),
@@ -227,10 +252,10 @@ class _TransferTaskRow extends StatelessWidget {
                   Text(
                     _terminalStatus(text),
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: task.groupKind == TransferGroupKind.failed
-                              ? Theme.of(context).colorScheme.error
-                              : null,
-                        ),
+                      color: task.groupKind == TransferGroupKind.failed
+                          ? Theme.of(context).colorScheme.error
+                          : null,
+                    ),
                   ),
               ],
             ),
@@ -246,15 +271,15 @@ class _TransferTaskRow extends StatelessWidget {
     final peer = controller.devices
         .where((d) => d.id == transfer.peerDeviceId)
         .firstOrNull;
-    final canCancel = peer == null || controller.peerSupportsCancel(peer);
+    final canCancel =
+        transfer.status == 'queued' ||
+        (peer != null && controller.peerSupportsCancel(peer));
     return IconButton(
       tooltip: canCancel
           ? controller.text.cancelTransfer
           : controller.text.transferCanceledHint,
       icon: const Icon(Icons.close, size: 18),
-      onPressed: canCancel
-          ? () => controller.cancelTransfer(transfer)
-          : null,
+      onPressed: canCancel ? () => controller.cancelTransfer(transfer) : null,
     );
   }
 

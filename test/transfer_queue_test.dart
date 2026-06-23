@@ -19,6 +19,7 @@ class _TestFileStore extends FileStore {
     await dir.create(recursive: true);
     return dir;
   }
+
   @override
   Future<SavedFile> saveToDownloads({
     required String sourcePath,
@@ -79,7 +80,12 @@ void main() {
       fingerprint: localB.fingerprint,
       avatarSeed: localB.avatarSeed,
       avatarColor: localB.avatarColor,
-      capabilities: const ['text', 'files', 'encrypted_chunks', 'transfer_cancel_v1'],
+      capabilities: const [
+        'text',
+        'files',
+        'encrypted_chunks',
+        'transfer_cancel_v1',
+      ],
     );
     final localA = await identityA.load();
     await dbB.trustDevice(
@@ -93,7 +99,12 @@ void main() {
       fingerprint: localA.fingerprint,
       avatarSeed: localA.avatarSeed,
       avatarColor: localA.avatarColor,
-      capabilities: const ['text', 'files', 'encrypted_chunks', 'transfer_cancel_v1'],
+      capabilities: const [
+        'text',
+        'files',
+        'encrypted_chunks',
+        'transfer_cancel_v1',
+      ],
     );
   });
 
@@ -106,23 +117,34 @@ void main() {
     await rootB.delete(recursive: true);
   });
 
-  test('queued transfer is created with queued status before execution', () async {
-    final localB = await IdentityService(dbB).load();
-    final peerB = (await dbA.getDevice(localB.deviceId))!;
-    final file = File('${rootA.path}${Platform.pathSeparator}q1.txt');
-    await file.writeAsString('queued payload');
+  test(
+    'queued transfer is created with queued status before execution',
+    () async {
+      final localB = await IdentityService(dbB).load();
+      final peerB = (await dbA.getDevice(localB.deviceId))!;
+      final file = File('${rootA.path}${Platform.pathSeparator}q1.txt');
+      await file.writeAsString('queued payload');
 
-    await transportA.sendFiles(peerB, [file.path]);
-    // 入队后立即应有一条 queued 记录。
-    final transfers = await dbA.select(dbA.transfers).get();
-    expect(transfers, isNotEmpty);
-    expect(transfers.any((t) => t.status == 'queued' || t.status == 'sending' || t.status == 'sent'), isTrue);
+      await transportA.sendFiles(peerB, [file.path]);
+      // 入队后立即应有一条 queued 记录。
+      final transfers = await dbA.select(dbA.transfers).get();
+      expect(transfers, isNotEmpty);
+      expect(
+        transfers.any(
+          (t) =>
+              t.status == 'queued' ||
+              t.status == 'sending' ||
+              t.status == 'sent',
+        ),
+        isTrue,
+      );
 
-    // 等待队列执行完成。
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    final done = await dbA.select(dbA.transfers).get();
-    expect(done.any((t) => t.status == 'sent'), isTrue);
-  });
+      // 等待队列执行完成。
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final done = await dbA.select(dbA.transfers).get();
+      expect(done.any((t) => t.status == 'sent'), isTrue);
+    },
+  );
 
   test('canceling a queued task marks it canceled without sending', () async {
     final localB = await IdentityService(dbB).load();
@@ -142,7 +164,9 @@ void main() {
 
     // 找到 queued 记录并取消。
     final transfers = await dbA.select(dbA.transfers).get();
-    final queuedTransfer = transfers.firstWhere((t) => t.fileName == 'queued.txt');
+    final queuedTransfer = transfers.firstWhere(
+      (t) => t.fileName == 'queued.txt',
+    );
     final canceled = await transportA.cancelOutbound(queuedTransfer.id);
     expect(canceled, isTrue);
 
@@ -162,40 +186,107 @@ void main() {
     }
   });
 
-  test('stale sending/receiving transfers are marked interrupted on start', () async {
-    // 直接往 dbA 插入一条 sending 记录，模拟上次崩溃残留。
-    final now = DateTime.now();
-    await dbA.into(dbA.transfers).insert(
-      TransfersCompanion.insert(
-        id: 'stale-1',
-        peerDeviceId: 'some-peer',
-        direction: 'out',
-        fileName: 'stale.bin',
-        fileSize: 100,
-        status: 'sending',
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
-    await dbA.into(dbA.chatMessages).insert(
-      ChatMessagesCompanion.insert(
-        id: 'stale-msg',
-        conversationId: 'peer:some-peer',
-        peerDeviceId: 'some-peer',
-        direction: 'out',
-        kind: 'file',
-        status: 'sending',
-        transferId: const Value('stale-1'),
-        createdAt: now,
-      ),
-    );
-    // 重新 start 触发 _markStaleTransfersInterrupted（已在 setUp 调用过，这里再显式验证）。
-    await transportA.stop();
-    await transportA.start();
-    final transfer = (await dbA.listTransfersByIds(['stale-1'])).single;
-    expect(transfer.status, 'interrupted');
-    expect(transfer.errorCode, 'interrupted');
+  test('canceling an active stream cleans up the receiver', () async {
+    final localB = await IdentityService(dbB).load();
+    final peerB = (await dbA.getDevice(localB.deviceId))!;
+    final file = File('${rootA.path}${Platform.pathSeparator}active.bin');
+    final sink = file.openWrite();
+    for (var i = 0; i < 16; i++) {
+      sink.add(List<int>.filled(1024 * 1024, i));
+    }
+    await sink.close();
+
+    await transportA.sendFiles(peerB, [file.path]);
+    Transfer? outgoing;
+    for (var i = 0; i < 100; i++) {
+      final rows = await dbA.select(dbA.transfers).get();
+      outgoing = rows
+          .where((item) => item.fileName == 'active.bin')
+          .firstOrNull;
+      if (outgoing != null && transportA.isOutboundActive(outgoing.id)) break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(outgoing, isA<Transfer>());
+    expect(transportA.isOutboundActive(outgoing!.id), isTrue);
+
+    Transfer? incoming;
+    for (var i = 0; i < 100; i++) {
+      final rows = await dbB.select(dbB.transfers).get();
+      incoming = rows.where((item) => item.id == outgoing!.id).firstOrNull;
+      if (incoming?.status == 'receiving') break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(incoming?.status, 'receiving');
+    final incomingPath = incoming!.filePath;
+
+    expect(await transportA.requestRemoteCancel(peerB, outgoing.id), isTrue);
+    expect(await transportA.cancelOutbound(outgoing.id), isTrue);
+
+    for (var i = 0; i < 100; i++) {
+      incoming = (await dbB.listTransfersByIds([outgoing.id])).single;
+      if (incoming.status == 'canceled') break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(incoming!.status, 'canceled');
+    expect(incomingPath == null || !File(incomingPath).existsSync(), isTrue);
   });
+
+  test(
+    'stale queued/sending transfers are marked interrupted on start',
+    () async {
+      // 直接往 dbA 插入 sending 与 queued 记录，模拟上次崩溃残留。
+      final now = DateTime.now();
+      for (final entry in const [
+        ('stale-sending', 'sending'),
+        ('stale-queued', 'queued'),
+      ]) {
+        await dbA
+            .into(dbA.transfers)
+            .insert(
+              TransfersCompanion.insert(
+                id: entry.$1,
+                peerDeviceId: 'some-peer',
+                direction: 'out',
+                fileName: '${entry.$1}.bin',
+                fileSize: 100,
+                status: entry.$2,
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+        await dbA
+            .into(dbA.chatMessages)
+            .insert(
+              ChatMessagesCompanion.insert(
+                id: '${entry.$1}-msg',
+                conversationId: 'peer:some-peer',
+                peerDeviceId: 'some-peer',
+                direction: 'out',
+                kind: 'file',
+                status: entry.$2,
+                transferId: Value(entry.$1),
+                createdAt: now,
+              ),
+            );
+      }
+      // 重新 start 触发 _markStaleTransfersInterrupted（已在 setUp 调用过，这里再显式验证）。
+      await transportA.stop();
+      await transportA.start();
+      final transfers = await dbA.listTransfersByIds([
+        'stale-sending',
+        'stale-queued',
+      ]);
+      expect(transfers, hasLength(2));
+      expect(
+        transfers.every((transfer) => transfer.status == 'interrupted'),
+        isTrue,
+      );
+      expect(
+        transfers.every((transfer) => transfer.errorCode == 'interrupted'),
+        isTrue,
+      );
+    },
+  );
 
   test('transfer task views group by kind and expose progress', () async {
     final localB = await IdentityService(dbB).load();

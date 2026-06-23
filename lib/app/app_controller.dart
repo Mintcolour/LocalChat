@@ -60,6 +60,7 @@ class AppController extends ChangeNotifier {
   late final SecurityService securityService;
   late final TransportService transportService;
   late final DiscoveryService discoveryService;
+
   /// 设置子控制器：语言/外观/自动复制/托盘/开机自启。对外字段与方法通过下方 getter
   /// 与同名方法委托，UI 无需感知拆分（计划 P1 控制器拆分）。
   late final SettingsController settings;
@@ -69,10 +70,13 @@ class AppController extends ChangeNotifier {
   List<Conversation> conversations = [];
   List<ChatMessage> messages = [];
   Map<String, Transfer> transfersById = {};
+
   /// 各会话未读数（conversationId -> count）。
   Map<String, int> unreadCounts = {};
+
   /// 各会话最后一条消息预览（conversationId -> message）。
   Map<String, ChatMessage> lastMessages = {};
+
   /// 会话列表名称过滤关键字。
   String conversationFilter = '';
 
@@ -81,8 +85,10 @@ class AppController extends ChangeNotifier {
     conversationFilter = value;
     notifyListeners();
   }
+
   /// 当前会话分页游标（用于判断是否还有更早的页 + 向前加载）。
   ChatPageCursor? messageCursor;
+
   /// 当前会话是否还有更早的消息可加载。
   bool hasMoreMessages = false;
   Device? selectedDevice;
@@ -90,6 +96,7 @@ class AppController extends ChangeNotifier {
   PendingPairRequest? pendingPairRequest;
   bool initialized = false;
   bool busy = false;
+
   /// 细粒度操作状态：记录正在进行的特定操作（配对、重试等），替代仅靠全局 busy
   /// 禁用输入的做法。文件传输已入队异步执行，不再阻塞输入框（计划 P1）。
   final Set<String> activeOperations = {};
@@ -205,12 +212,22 @@ class AppController extends ChangeNotifier {
             selectedDevice;
         selectedConversation = await db.ensureConversation(selectedDevice!);
         // 分页：刷新时只重载最新一页，避免大历史全量加载。
-        final page = await db.listMessagesPage(
+        final latestPage = await db.listMessagesPage(
           conversationId: selectedConversation!.id,
           limit: 50,
         );
-        messages = page;
-        _updateMessageCursor(page);
+        // 保留用户已经加载的旧页或搜索定位页，只合并最新页的状态与新增消息。
+        // 否则传输进度/在线状态触发的 refresh 会每 200ms 把视图重置回最新 50 条。
+        final merged =
+            <String, ChatMessage>{
+              for (final message in messages) message.id: message,
+              for (final message in latestPage) message.id: message,
+            }.values.toList()..sort((a, b) {
+              final byTime = a.createdAt.compareTo(b.createdAt);
+              return byTime != 0 ? byTime : a.id.compareTo(b.id);
+            });
+        messages = merged;
+        _updateMessageCursor(messages);
         final transferIds = messages
             .map((message) => message.transferId)
             .whereType<String>();
@@ -285,6 +302,26 @@ class AppController extends ChangeNotifier {
     final conversation = selectedConversation;
     if (conversation == null || query.trim().isEmpty) return const [];
     return db.searchMessages(conversation.id, query.trim());
+  }
+
+  /// 将搜索命中的历史消息所在页载入当前会话，避免只搜索到结果却无法定位。
+  Future<bool> loadSearchResult(ChatMessage target) async {
+    final conversation = selectedConversation;
+    if (conversation == null || target.conversationId != conversation.id) {
+      return false;
+    }
+    if (messages.any((message) => message.id == target.id)) return true;
+    final page = await db.listMessagesPageEndingAt(
+      conversationId: conversation.id,
+      createdAt: target.createdAt,
+      id: target.id,
+      limit: 50,
+    );
+    messages = page;
+    _updateMessageCursor(page);
+    await _ensureTransfersForCurrentMessages();
+    notifyListeners();
+    return page.any((message) => message.id == target.id);
   }
 
   void _updateMessageCursor(List<ChatMessage> page) {
@@ -424,9 +461,7 @@ class AppController extends ChangeNotifier {
   Future<void> setAutostartEnabled(bool value) async {
     await settings.setAutostartEnabled(value);
     status = value
-        ? (settings.languageCode == 'en'
-              ? 'Start on boot enabled'
-              : '已开启开机自启')
+        ? (settings.languageCode == 'en' ? 'Start on boot enabled' : '已开启开机自启')
         : (settings.languageCode == 'en'
               ? 'Start on boot disabled'
               : '已关闭开机自启');
@@ -759,10 +794,12 @@ class AppController extends ChangeNotifier {
 
   /// 打开消息中的链接：Windows 用默认浏览器，其他平台用 OpenFilex。
   Future<void> openUrl(String url) async {
-    if (url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) return;
     if (Platform.isWindows) {
       try {
-        await Process.run('cmd', ['/c', 'start', '', url]);
+        // 不经过 cmd.exe，避免消息中的 &、| 等字符被解释为 shell 命令。
+        await Process.start('explorer.exe', [url]);
         return;
       } catch (_) {}
     }
@@ -955,11 +992,17 @@ class AppController extends ChangeNotifier {
   /// 取消一个出站传输。优先本地取消（排队或活动任务）；若该任务已发送到对端且
   /// 对端支持取消能力，则同时请求对端中断接收。返回是否成功取消。
   Future<bool> cancelTransfer(Transfer transfer) async {
+    final wasActive = transportService.isOutboundActive(transfer.id);
+    if (wasActive) {
+      final peer = await db.getDevice(transfer.peerDeviceId);
+      if (peer != null && transportService.deviceSupportsCancel(peer)) {
+        // 先让接收端关闭并清理临时文件，再中止本地发送流。
+        await transportService.requestRemoteCancel(peer, transfer.id);
+      }
+    }
     final localCanceled = await transportService.cancelOutbound(transfer.id);
     if (localCanceled) {
-      status = languageCode == 'en'
-          ? 'Transfer canceled'
-          : '已取消传输';
+      status = languageCode == 'en' ? 'Transfer canceled' : '已取消传输';
       notifyListeners();
       return true;
     }
@@ -976,15 +1019,26 @@ class AppController extends ChangeNotifier {
     final ok = await transportService.requestRemoteCancel(peer, transfer.id);
     status = ok
         ? (languageCode == 'en' ? 'Transfer canceled' : '已取消传输')
-        : (languageCode == 'en'
-              ? 'Transfer could not be canceled'
-              : '无法取消该传输');
+        : (languageCode == 'en' ? 'Transfer could not be canceled' : '无法取消该传输');
     notifyListeners();
     return ok;
   }
 
   /// 取消整组出站传输（文件夹或批量附件）。
   Future<int> cancelTransferGroup(String groupId) async {
+    final activeTransferId = transportService.activeOutboundTransferIdForGroup(
+      groupId,
+    );
+    if (activeTransferId != null) {
+      final transfers = await db.listTransfersByIds([activeTransferId]);
+      final active = transfers.firstOrNull;
+      if (active != null) {
+        final peer = await db.getDevice(active.peerDeviceId);
+        if (peer != null && transportService.deviceSupportsCancel(peer)) {
+          await transportService.requestRemoteCancel(peer, active.id);
+        }
+      }
+    }
     final count = await transportService.cancelOutboundGroup(groupId);
     status = languageCode == 'en'
         ? 'Canceled $count transfer(s)'

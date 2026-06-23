@@ -171,6 +171,9 @@ class _LocalChatHomeState extends State<LocalChatHome> {
                   final narrow = constraints.maxWidth < 820;
                   final devicePane = _DevicePane(controller: controller);
                   final chatPane = _ChatPane(
+                    key: ValueKey(
+                      'chat-${controller.selectedDevice?.id ?? 'none'}',
+                    ),
                     controller: controller,
                     textController: _textController,
                     dragging: _dragging,
@@ -409,7 +412,10 @@ class _DeviceTile extends StatelessWidget {
                 right: -4,
                 top: -4,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.error,
                     borderRadius: BorderRadius.circular(10),
@@ -511,6 +517,7 @@ Color _colorFromHex(String value) {
 
 class _ChatPane extends StatefulWidget {
   const _ChatPane({
+    super.key,
     required this.controller,
     required this.textController,
     required this.dragging,
@@ -653,35 +660,40 @@ class _ChatPaneState extends State<_ChatPane> {
           if (peer.trusted && !online)
             _ConnectionBanner(controller: controller, peer: peer),
           if (widget.dragging) _DropBanner(controller: controller),
-          if (peer.trusted) _SearchBar(
-            controller: controller,
-            searching: _searching,
-            query: _searchQuery,
-            resultCount: _searchResults.length,
-            index: _searchIndex,
-            onToggle: () => setState(() {
-              _searching = !_searching;
-              if (!_searching) {
-                _searchQuery = '';
-                _searchResults = const [];
-              }
-            }),
-            onChanged: _runSearch,
-            onPrev: () => setState(() {
-              if (_searchResults.isNotEmpty) {
-                _searchIndex = (_searchIndex - 1) < 0
-                    ? _searchResults.length - 1
-                    : _searchIndex - 1;
-                _scrollToMessage(_searchResults[_searchIndex]);
-              }
-            }),
-            onNext: () => setState(() {
-              if (_searchResults.isNotEmpty) {
-                _searchIndex = (_searchIndex + 1) % _searchResults.length;
-                _scrollToMessage(_searchResults[_searchIndex]);
-              }
-            }),
-          ),
+          if (peer.trusted)
+            _SearchBar(
+              controller: controller,
+              searching: _searching,
+              query: _searchQuery,
+              resultCount: _searchResults.length,
+              index: _searchIndex,
+              onToggle: () => setState(() {
+                _searching = !_searching;
+                if (!_searching) {
+                  _searchQuery = '';
+                  _searchResults = const [];
+                }
+              }),
+              onChanged: _runSearch,
+              onPrev: () {
+                if (_searchResults.isNotEmpty) {
+                  setState(() {
+                    _searchIndex = (_searchIndex - 1) < 0
+                        ? _searchResults.length - 1
+                        : _searchIndex - 1;
+                  });
+                  _scrollToMessage(_searchResults[_searchIndex]);
+                }
+              },
+              onNext: () {
+                if (_searchResults.isNotEmpty) {
+                  setState(() {
+                    _searchIndex = (_searchIndex + 1) % _searchResults.length;
+                  });
+                  _scrollToMessage(_searchResults[_searchIndex]);
+                }
+              },
+            ),
           if (controller.pendingAttachmentBatch != null)
             _AttachmentTray(controller: controller),
           Expanded(
@@ -744,22 +756,26 @@ class _ChatPaneState extends State<_ChatPane> {
         if (item.isDateSeparator) {
           return _DateSeparator(date: item.date!, text: controller.text);
         }
-        return _MessageBubble(
-          controller: controller,
-          message: item.message!,
-        );
+        return _MessageBubble(controller: controller, message: item.message!);
       },
     );
   }
 
-  void _scrollToMessage(ChatMessage target) {
-    // 简单实现：目标在当前已加载页内则滚动到对应位置；否则跳到底部提示加载。
-    final index = controller.messages.indexWhere((m) => m.id == target.id);
+  Future<void> _scrollToMessage(ChatMessage target) async {
+    var index = controller.messages.indexWhere((m) => m.id == target.id);
+    if (index < 0) {
+      final loaded = await controller.loadSearchResult(target);
+      if (!mounted || !loaded) return;
+      await WidgetsBinding.instance.endOfFrame;
+      index = controller.messages.indexWhere((m) => m.id == target.id);
+    }
     if (index < 0) return;
     // 估算偏移：消息项含气泡 + padding，按粗略高度滚动。
     if (_scrollController.hasClients) {
-      final offset = (index * 88.0)
-          .clamp(0.0, _scrollController.position.maxScrollExtent);
+      final offset = (index * 88.0).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
       _scrollController.animateTo(
         offset,
         duration: const Duration(milliseconds: 200),
@@ -928,9 +944,7 @@ class _AttachmentTray extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Wrap(
         spacing: 8,
@@ -939,17 +953,13 @@ class _AttachmentTray extends StatelessWidget {
           for (final item in batch.items)
             Chip(
               label: Text(item.fileName),
-              onDeleted: () => controller.removeAttachmentFromBatch(
-                batch.id,
-                item,
-              ),
+              onDeleted: () =>
+                  controller.removeAttachmentFromBatch(batch.id, item),
             ),
           ActionChip(
             label: Text(controller.text.confirmSend(batch.items.length)),
-            onPressed: () => controller.completeAttachmentBatch(
-              batch.id,
-              batch.items,
-            ),
+            onPressed: () =>
+                controller.completeAttachmentBatch(batch.id, batch.items),
           ),
         ],
       ),
@@ -1492,8 +1502,8 @@ class _Composer extends StatelessWidget {
   Widget build(BuildContext context) {
     // 文件传输已入队异步执行，不再用全局 busy 禁用输入框；仅当当前会话正在
     // 发送文本时短暂禁用，避免重复提交（计划 P1：传输期间仍可输入和发送）。
-    final enabled = peer.trusted &&
-        !controller.isOperationActive('sendText:${peer.id}');
+    final enabled =
+        peer.trusted && !controller.isOperationActive('sendText:${peer.id}');
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
@@ -1715,11 +1725,7 @@ class _TextMessage extends StatelessWidget {
             for (final link in links)
               ActionChip(
                 avatar: const Icon(Icons.link, size: 16),
-                label: Text(
-                  link,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                label: Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
                 onPressed: () => controller.openUrl(link),
               ),
           ],
@@ -1768,7 +1774,8 @@ class _FileMessage extends StatelessWidget {
         progress < 1 &&
         (message.status == 'sending' || message.status == 'receiving');
     final isQueued = message.status == 'queued';
-    final isTerminalFailed = message.status == 'failed' ||
+    final isTerminalFailed =
+        message.status == 'failed' ||
         message.status == 'canceled' ||
         message.status == 'interrupted';
     return Column(
@@ -1803,10 +1810,10 @@ class _FileMessage extends StatelessWidget {
                     Text(
                       messageStatusLabel(message.status),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: isTerminalFailed
-                                ? Theme.of(context).colorScheme.error
-                                : null,
-                          ),
+                        color: isTerminalFailed
+                            ? Theme.of(context).colorScheme.error
+                            : null,
+                      ),
                     ),
                 ],
               ),
@@ -1893,8 +1900,7 @@ Future<void> _showRenameFileDialog(
   final formKey = GlobalKey<FormState>();
   final initial = transfer.fileName;
   final dot = initial.lastIndexOf('.');
-  final cursorOffset =
-      dot > 0 ? dot : initial.length; // 放在扩展名前面（无扩展名时置于末尾）
+  final cursorOffset = dot > 0 ? dot : initial.length; // 放在扩展名前面（无扩展名时置于末尾）
   final textController = TextEditingController(text: initial)
     ..selection = TextSelection.collapsed(offset: cursorOffset);
   var value = initial;

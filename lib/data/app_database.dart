@@ -264,7 +264,8 @@ class AppDatabase extends _$AppDatabase {
       // 发现信息只刷新地址、名称、头像、在线状态与能力；签名/交换公钥/指纹绝不
       // 被覆盖。检测到任一身份字段变化即标记 identity_changed，发送侧据此拦截，
       // 要求用户删除后重新配对。
-      final identityChanged = existing.identityChanged == true ||
+      final identityChanged =
+          existing.identityChanged == true ||
           signingPublicKey != existing.signingPublicKey ||
           exchangePublicKey != existing.exchangePublicKey ||
           fingerprint != existing.fingerprint;
@@ -543,6 +544,29 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  /// 读取以指定消息为末尾的一页，用于从全历史搜索结果直接定位到尚未加载的消息。
+  Future<List<ChatMessage>> listMessagesPageEndingAt({
+    required String conversationId,
+    required DateTime createdAt,
+    required String id,
+    int limit = 50,
+  }) {
+    final query = select(chatMessages)
+      ..where((tbl) => tbl.conversationId.equals(conversationId))
+      ..where(
+        (tbl) =>
+            tbl.createdAt.isSmallerThanValue(createdAt) |
+            (tbl.createdAt.equals(createdAt) &
+                (tbl.id.isSmallerThanValue(id) | tbl.id.equals(id))),
+      )
+      ..orderBy([
+        (tbl) => OrderingTerm.desc(tbl.createdAt),
+        (tbl) => OrderingTerm.desc(tbl.id),
+      ])
+      ..limit(limit);
+    return query.get().then((rows) => rows.reversed.toList());
+  }
+
   /// 计算会话在 lastReadAt 之后的未读消息数。lastReadAt 为空时全部计入。
   Future<int> unreadCount(String conversationId, {DateTime? lastReadAt}) async {
     final query = select(chatMessages)
@@ -561,22 +585,21 @@ class AppDatabase extends _$AppDatabase {
     String query,
   ) async {
     final like = '%$query%';
-    final rows = await (select(chatMessages)
-          ..where((tbl) => tbl.conversationId.equals(conversationId))
-          ..where(
-            (tbl) =>
-                (tbl.body.like(like)) | (tbl.fileName.like(like)),
-          )
-          ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)])
-          ..limit(100))
-        .get();
+    final rows =
+        await (select(chatMessages)
+              ..where((tbl) => tbl.conversationId.equals(conversationId))
+              ..where(
+                (tbl) => (tbl.body.like(like)) | (tbl.fileName.like(like)),
+              )
+              ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)])
+              ..limit(100))
+            .get();
     return rows;
   }
 
   /// 更新会话最后阅读时间，用于未读统计清零。
   Future<void> markConversationRead(String conversationId) async {
-    await (update(conversations)
-          ..where((tbl) => tbl.id.equals(conversationId)))
+    await (update(conversations)..where((tbl) => tbl.id.equals(conversationId)))
         .write(ConversationsCompanion(lastReadAt: Value(DateTime.now())));
   }
 

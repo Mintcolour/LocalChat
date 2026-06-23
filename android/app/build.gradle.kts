@@ -7,8 +7,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// 读取本地签名凭据（keystore.properties，不入库）。缺失时回退 debug 签名，
-// 保证无证书环境仍可构建；正式发布需提供该文件与对应 .jks（计划 P0：固定签名）。
+// 读取本地签名凭据（keystore.properties，不入库）。Release 始终使用固定签名；
+// 缺少凭据时让构建失败，避免静默产出无法覆盖升级的 debug 签名安装包。
 val keystoreProperties = Properties()
 val keystoreFile = rootProject.file("keystore.properties")
 if (keystoreFile.exists()) {
@@ -47,12 +47,7 @@ android {
 
     buildTypes {
         release {
-            // 优先使用固定 release 签名；凭据缺失时回退 debug，保证可构建。
-            signingConfig = if (keystoreProperties.containsKey("storeFile")) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

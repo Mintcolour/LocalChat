@@ -10,8 +10,8 @@ import 'secure_key_store.dart';
 
 class IdentityService {
   IdentityService(this._db, {SecureKeyStore? secureKeyStore})
-      // ignore: prefer_initializing_formals
-      : _secureKeyStore = secureKeyStore;
+    // ignore: prefer_initializing_formals
+    : _secureKeyStore = secureKeyStore;
 
   final AppDatabase _db;
   // ignore: prefer_initializing_formals
@@ -50,13 +50,17 @@ class IdentityService {
   Future<LocalIdentity> load() async {
     final existingDeviceId = await _db.getSetting('identity.device_id');
     if (existingDeviceId != null) {
-      var signingPrivate = await _secureKeyStore?.readSigningPrivateKey();
-      var exchangePrivate = await _secureKeyStore?.readExchangePrivateKey();
-      final legacySigningPrivate = await _db.getSetting(
-        'identity.signing_private_key',
+      var signingPrivate = _nonEmpty(
+        await _secureKeyStore?.readSigningPrivateKey(),
       );
-      final legacyExchangePrivate = await _db.getSetting(
-        'identity.exchange_private_key',
+      var exchangePrivate = _nonEmpty(
+        await _secureKeyStore?.readExchangePrivateKey(),
+      );
+      final legacySigningPrivate = _nonEmpty(
+        await _db.getSetting('identity.signing_private_key'),
+      );
+      final legacyExchangePrivate = _nonEmpty(
+        await _db.getSetting('identity.exchange_private_key'),
       );
       var migrated = false;
       if (signingPrivate == null && legacySigningPrivate != null) {
@@ -76,9 +80,13 @@ class IdentityService {
       final fingerprint = await _db.getSetting('identity.fingerprint');
       var avatarSeed = await _db.getSetting('identity.avatar_seed');
       var avatarColor = await _db.getSetting('identity.avatar_color');
-      if (signingPrivate != null &&
-          signingPublic != null &&
-          exchangePrivate != null &&
+      if (signingPrivate == null || exchangePrivate == null) {
+        throw StateError(
+          'Stored identity private keys are unavailable. Reset the local '
+          'identity and pair devices again.',
+        );
+      }
+      if (signingPublic != null &&
           exchangePublic != null &&
           displayName != null &&
           platform != null &&
@@ -177,6 +185,9 @@ class IdentityService {
       avatarColor: avatarColor,
     );
   }
+
+  String? _nonEmpty(String? value) =>
+      value == null || value.isEmpty ? null : value;
 
   Future<LocalIdentity> updateDisplayName(String displayName) async {
     final current = identity;

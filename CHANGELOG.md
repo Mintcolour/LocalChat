@@ -2,6 +2,28 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.0 - 2026-06-23
+
+### 中文
+
+- 强化可信设备安全底座，增加公钥固定、身份变化拦截、nonce 重放防护和数据库 v5 迁移。
+- 增加独立传输中心，支持出站排队、整组进度、取消兼容能力和失败/中断状态展示。
+- 增强聊天页历史体验，支持分页加载、日期分隔、未读数、消息搜索定位、链接识别和附件托盘。
+- 重构设置控制器和细粒度操作状态，减少文件传输期间对输入区的阻塞。
+- 重做绿色系视觉风格，优化微信式聊天气泡、设备状态图标和文件消息可读性。
+- 增加私钥迁移到系统安全存储和 Android 固定 release 签名。
+- 设置页显示本机局域网 IP/端口，传输历史支持打开、打开文件夹和接收文件重命名。
+
+### English
+
+- Strengthened the trusted-device security base with key pinning, identity-change blocking, nonce replay protection, and database v5 migration.
+- Added a dedicated transfer center with outbound queueing, grouped progress, cancel compatibility, and failed/interrupted status display.
+- Improved chat history with pagination, date separators, unread counts, message search positioning, link detection, and an attachment tray.
+- Refactored settings control and fine-grained operation state so file transfers no longer block the composer globally.
+- Redesigned the green visual style with chat-style bubbles, persistent device-status icons, and more readable file messages.
+- Added private-key migration to platform secure storage plus fixed Android release signing.
+- Added local LAN IP/port display in settings and transfer-history actions for open, open folder, and received-file rename.
+
 ## 1.2.0 - 2026-06-22
 
 ### 中文

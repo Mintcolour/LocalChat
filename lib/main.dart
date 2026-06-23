@@ -392,6 +392,7 @@ class _DeviceTile extends StatelessWidget {
       lastMessage?.body,
       lastMessage?.fileName,
     );
+    final statusLabel = controller.text.peerStatus(device);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: ListTile(
@@ -433,15 +434,21 @@ class _DeviceTile extends StatelessWidget {
               ),
           ],
         ),
-        title: Text(
-          controller.titleFor(device),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                controller.titleFor(device),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 6),
+            _PeerStatusBadge(device: device, label: statusLabel),
+          ],
         ),
         subtitle: Text(
-          preview.isEmpty
-              ? '${controller.text.peerStatus(device)} · ${device.platform} · $endpoint'
-              : preview,
+          preview.isEmpty ? '${device.platform} · $endpoint' : preview,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -463,6 +470,36 @@ class _DeviceTile extends StatelessWidget {
                 child: Text(controller.text.pair),
               ),
         onTap: () => controller.selectDevice(device),
+      ),
+    );
+  }
+}
+
+class _PeerStatusBadge extends StatelessWidget {
+  const _PeerStatusBadge({required this.device, required this.label});
+
+  final Device device;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final online = isPeerOnline(device);
+    final icon = !device.trusted
+        ? Icons.link_off_outlined
+        : online
+        ? Icons.check_circle
+        : Icons.cloud_off_outlined;
+    final color = !device.trusted
+        ? scheme.outline
+        : online
+        ? scheme.primary
+        : scheme.error;
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Icon(icon, size: 16, color: color),
       ),
     );
   }
@@ -1172,6 +1209,7 @@ Future<void> _showSettingsDialog(
   BuildContext context,
   AppController controller,
 ) async {
+  final localEndpointsFuture = controller.loadLocalNetworkEndpoints();
   await showDialog<void>(
     context: context,
     builder: (context) => AnimatedBuilder(
@@ -1193,6 +1231,26 @@ Future<void> _showSettingsDialog(
                   onPressed: () => _showLocalRenameDialog(context, controller),
                   icon: const Icon(Icons.edit_outlined),
                 ),
+              ),
+              FutureBuilder<List<String>>(
+                future: localEndpointsFuture,
+                builder: (context, snapshot) {
+                  final endpoints = snapshot.data ?? const <String>[];
+                  final subtitle =
+                      snapshot.connectionState == ConnectionState.done
+                      ? (endpoints.isEmpty
+                            ? controller.text.localNetworkEndpointsEmpty(
+                                controller.localListenPort,
+                              )
+                            : endpoints.join('\n'))
+                      : controller.text.loadingLocalNetworkEndpoints;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.lan_outlined),
+                    title: Text(controller.text.localNetworkEndpoints),
+                    subtitle: SelectableText(subtitle),
+                  );
+                },
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1778,115 +1836,188 @@ class _FileMessage extends StatelessWidget {
         message.status == 'failed' ||
         message.status == 'canceled' ||
         message.status == 'interrupted';
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _FilePreview(message: message, mimeType: mimeType),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
+    final outgoing = message.direction == 'out';
+    final scheme = Theme.of(context).colorScheme;
+    final panelColor = outgoing
+        ? scheme.onPrimary.withValues(alpha: 0.14)
+        : scheme.surfaceContainerHigh;
+    final panelBorderColor = outgoing
+        ? scheme.onPrimary.withValues(alpha: 0.22)
+        : scheme.outlineVariant;
+    final primaryTextColor = outgoing ? scheme.onPrimary : scheme.onSurface;
+    final secondaryTextColor = outgoing
+        ? scheme.onPrimary.withValues(alpha: 0.82)
+        : scheme.onSurfaceVariant;
+    final disabledActionColor = outgoing
+        ? scheme.onPrimary.withValues(alpha: 0.36)
+        : scheme.onSurface.withValues(alpha: 0.34);
+    final failureTextColor = outgoing ? scheme.onPrimary : scheme.error;
+    final fileName =
+        message.relativePath ?? message.fileName ?? controller.text.file;
+    final smallTextStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: secondaryTextColor);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: panelColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: panelBorderColor),
+      ),
+      child: DefaultTextStyle.merge(
+        style: TextStyle(color: primaryTextColor),
+        child: IconTheme.merge(
+          data: IconThemeData(color: primaryTextColor),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    message.relativePath ??
-                        message.fileName ??
-                        controller.text.file,
+                  _FilePreview(message: message, mimeType: mimeType),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          fileName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: primaryTextColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                        if (fileSize > 0)
+                          Text(formatBytes(fileSize), style: smallTextStyle),
+                        if (saved)
+                          Text(
+                            controller.text.savedLocal,
+                            style: smallTextStyle,
+                          ),
+                        if (isQueued || isTerminalFailed)
+                          Text(
+                            messageStatusLabel(message.status),
+                            style: smallTextStyle?.copyWith(
+                              color: isTerminalFailed
+                                  ? failureTextColor
+                                  : secondaryTextColor,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                  if (fileSize > 0)
-                    Text(
-                      formatBytes(fileSize),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  if (saved)
-                    Text(
-                      controller.text.savedLocal,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  if (isQueued || isTerminalFailed)
-                    Text(
-                      messageStatusLabel(message.status),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: isTerminalFailed
-                            ? Theme.of(context).colorScheme.error
-                            : null,
-                      ),
-                    ),
                 ],
               ),
-            ),
-          ],
-        ),
-        if (showProgress) ...[
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 4),
-          Text(
-            '${formatBytes(receivedBytes)} / ${formatBytes(fileSize)} · ${(progress * 100).toStringAsFixed(1)}%',
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
-        ],
-        if (isQueued) ...[
-          const SizedBox(height: 8),
-          const LinearProgressIndicator(),
-        ],
-        const SizedBox(height: 4),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Wrap(
-            spacing: 2,
-            runSpacing: 2,
-            alignment: WrapAlignment.end,
-            children: [
-              if (canRetry)
-                IconButton(
-                  tooltip: controller.text.retry,
-                  onPressed: controller.busy
-                      ? null
-                      : () => controller.retryMessage(message),
-                  icon: const Icon(Icons.refresh),
+              if (showProgress) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: progress,
+                  color: primaryTextColor,
+                  backgroundColor: primaryTextColor.withValues(alpha: 0.22),
                 ),
-              IconButton(
-                tooltip: controller.text.open,
-                onPressed: openTarget == null
-                    ? null
-                    : () => controller.openPath(openTarget),
-                icon: const Icon(Icons.open_in_new),
-              ),
-              IconButton(
-                tooltip: controller.text.openFolder,
-                onPressed: folderTarget == null
-                    ? null
-                    : () => controller.openFolder(folderTarget),
-                icon: const Icon(Icons.folder_open),
-              ),
-              if (canRename)
-                IconButton(
-                  tooltip: controller.text.renameFile,
-                  onPressed: controller.busy
-                      ? null
-                      : () => _showRenameFileDialog(
-                          context,
-                          controller,
-                          message,
-                          transfer!,
-                        ),
-                  icon: const Icon(Icons.drive_file_rename_outline),
+                const SizedBox(height: 4),
+                Text(
+                  '${formatBytes(receivedBytes)} / ${formatBytes(fileSize)} · ${(progress * 100).toStringAsFixed(1)}%',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: secondaryTextColor),
                 ),
-              IconButton(
-                tooltip: controller.text.saveLocal,
-                onPressed: saved
-                    ? null
-                    : () => controller.saveMessageFile(message),
-                icon: const Icon(Icons.save_alt),
+              ],
+              if (isQueued) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  color: primaryTextColor,
+                  backgroundColor: primaryTextColor.withValues(alpha: 0.22),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 2,
+                  runSpacing: 2,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    if (canRetry)
+                      _fileActionButton(
+                        tooltip: controller.text.retry,
+                        onPressed: controller.busy
+                            ? null
+                            : () => controller.retryMessage(message),
+                        icon: Icons.refresh,
+                        color: primaryTextColor,
+                        disabledColor: disabledActionColor,
+                      ),
+                    _fileActionButton(
+                      tooltip: controller.text.open,
+                      onPressed: openTarget == null
+                          ? null
+                          : () => controller.openPath(openTarget),
+                      icon: Icons.open_in_new,
+                      color: primaryTextColor,
+                      disabledColor: disabledActionColor,
+                    ),
+                    _fileActionButton(
+                      tooltip: controller.text.openFolder,
+                      onPressed: folderTarget == null
+                          ? null
+                          : () => controller.openFolder(folderTarget),
+                      icon: Icons.folder_open,
+                      color: primaryTextColor,
+                      disabledColor: disabledActionColor,
+                    ),
+                    if (canRename)
+                      _fileActionButton(
+                        tooltip: controller.text.renameFile,
+                        onPressed: controller.busy
+                            ? null
+                            : () => _showRenameFileDialog(
+                                context,
+                                controller,
+                                message,
+                                transfer!,
+                              ),
+                        icon: Icons.drive_file_rename_outline,
+                        color: primaryTextColor,
+                        disabledColor: disabledActionColor,
+                      ),
+                    _fileActionButton(
+                      tooltip: controller.text.saveLocal,
+                      onPressed: saved
+                          ? null
+                          : () => controller.saveMessageFile(message),
+                      icon: Icons.save_alt,
+                      color: primaryTextColor,
+                      disabledColor: disabledActionColor,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _fileActionButton({
+    required String tooltip,
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required Color color,
+    required Color disabledColor,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      color: color,
+      disabledColor: disabledColor,
+      onPressed: onPressed,
+      icon: Icon(icon),
     );
   }
 }

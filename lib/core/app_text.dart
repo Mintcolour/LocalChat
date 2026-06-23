@@ -42,6 +42,12 @@ class AppText {
       : '将删除“$title”的聊天记录、传输索引、连接信息和信任关系，磁盘上的文件不会被删除。';
   String get localNickname => en ? 'Local nickname' : '本机昵称';
   String get editLocalNickname => en ? 'Edit local nickname' : '修改本机昵称';
+  String get localNetworkEndpoints => en ? 'Local IP / port' : '本机 IP / 端口';
+  String get loadingLocalNetworkEndpoints =>
+      en ? 'Detecting local network addresses...' : '正在检测本机局域网地址...';
+  String localNetworkEndpointsEmpty(int port) => en
+      ? 'No LAN IPv4 address detected. Listening port: ${port > 0 ? port : '-'}'
+      : '未发现可用局域网 IPv4。监听端口：${port > 0 ? port : '-'}';
   String get deviceNameVisible =>
       en ? 'Device name visible to others' : '别人看到的设备名称';
   String get language => en ? 'Language' : '语言';
@@ -110,21 +116,20 @@ class AppText {
   String get peerPort => en ? 'Port' : '端口';
   String get add => en ? 'Add' : '添加';
   String get transferCenter => en ? 'Transfer center' : '传输中心';
-  String get transferCenterSubtitle => en
-      ? 'Track and manage file transfers'
-      : '查看和管理文件传输';
+  String get transferCenterSubtitle =>
+      en ? 'Track and manage file transfers' : '查看和管理文件传输';
   String get transfersActive => en ? 'In progress' : '进行中';
   String get transfersCompleted => en ? 'Completed' : '已完成';
   String get transfersFailed => en ? 'Failed / canceled' : '失败 / 已取消';
-  String get noTransfers => en
-      ? 'No transfers yet.'
-      : '还没有传输记录。';
+  String get noTransfers => en ? 'No transfers yet.' : '还没有传输记录。';
   String get cancelTransfer => en ? 'Cancel transfer' : '取消传输';
   String get cancelGroup => en ? 'Cancel group' : '取消整组';
   String get retryTransfer => en ? 'Retry' : '重试';
-  String transferEta(int seconds) => en ? '~${seconds}s left' : '约 ${seconds}s 后完成';
-  String transferSpeed(double bytesPerSecond) =>
-      en ? '${_formatBytes(bytesPerSecond)}/s' : '${_formatBytes(bytesPerSecond)}/秒';
+  String transferEta(int seconds) =>
+      en ? '~${seconds}s left' : '约 ${seconds}s 后完成';
+  String transferSpeed(double bytesPerSecond) => en
+      ? '${_formatBytes(bytesPerSecond)}/s'
+      : '${_formatBytes(bytesPerSecond)}/秒';
   String get transferCanceledHint => en
       ? 'The peer version does not support canceling in-progress transfers.'
       : '对端版本不支持取消进行中的传输。';
@@ -133,8 +138,7 @@ class AppText {
   String searchResultLabel(int index, int total) =>
       en ? '$index / $total' : '$index / $total';
   String get close => en ? 'Close' : '关闭';
-  String get filterConversations =>
-      en ? 'Filter conversations' : '过滤会话';
+  String get filterConversations => en ? 'Filter conversations' : '过滤会话';
   String lastMessagePreview(String? body, String? fileName) {
     if (body != null && body.isNotEmpty) return body;
     if (fileName != null && fileName.isNotEmpty) return '[$fileName]';

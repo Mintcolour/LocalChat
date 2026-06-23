@@ -7,6 +7,7 @@ import '../core/app_text.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
 import '../models/transfer_views.dart';
+import '../services/file_store.dart';
 
 /// 传输中心：按“进行中 / 已完成 / 失败”分组展示全部传输，支持查看进度、速度、
 /// 预计剩余时间、失败原因，以及取消排队/活动中的出站任务或整组。
@@ -261,9 +262,57 @@ class _TransferTaskRow extends StatelessWidget {
             ),
           ),
           if (isActive && transfer.direction == 'out')
-            _cancelButton(context, transfer),
+            _cancelButton(context, transfer)
+          else if (!isActive)
+            _historyActions(context, transfer),
         ],
       ),
+    );
+  }
+
+  Widget _historyActions(BuildContext context, Transfer transfer) {
+    final openTarget =
+        transfer.savedUri ?? transfer.savedPath ?? transfer.filePath;
+    final folderTarget = transfer.savedUri == null
+        ? transfer.savedPath ?? transfer.filePath
+        : null;
+    final canRename = controller.canRenameTransfer(transfer);
+    if (openTarget == null && folderTarget == null && !canRename) {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      spacing: 0,
+      children: [
+        IconButton(
+          tooltip: controller.text.open,
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.open_in_new, size: 18),
+          onPressed: openTarget == null
+              ? null
+              : () => controller.openPath(openTarget),
+        ),
+        IconButton(
+          tooltip: controller.text.openFolder,
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.folder_open, size: 18),
+          onPressed: folderTarget == null
+              ? null
+              : () => controller.openFolder(folderTarget),
+        ),
+        if (canRename)
+          IconButton(
+            tooltip: controller.text.renameFile,
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.drive_file_rename_outline, size: 18),
+            onPressed: controller.busy
+                ? null
+                : () => _showRenameTransferFileDialog(
+                    context,
+                    controller,
+                    transfer,
+                  ),
+          ),
+      ],
     );
   }
 
@@ -313,4 +362,59 @@ class _TransferTaskRow extends StatelessWidget {
     }
     return messageStatusLabel(task.transfer.status);
   }
+}
+
+Future<void> _showRenameTransferFileDialog(
+  BuildContext context,
+  AppController controller,
+  Transfer transfer,
+) async {
+  final formKey = GlobalKey<FormState>();
+  final initial = transfer.fileName;
+  final dot = initial.lastIndexOf('.');
+  final cursorOffset = dot > 0 ? dot : initial.length;
+  final textController = TextEditingController(text: initial)
+    ..selection = TextSelection.collapsed(offset: cursorOffset);
+  var value = initial;
+  final result = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(controller.text.renameFile),
+      content: Form(
+        key: formKey,
+        child: TextFormField(
+          controller: textController,
+          autofocus: true,
+          decoration: InputDecoration(labelText: controller.text.fileName),
+          onChanged: (text) => value = text,
+          validator: (text) => FileStore.validateFileName(text ?? '') == null
+              ? null
+              : controller.text.invalidFileName,
+          onFieldSubmitted: (_) {
+            if (formKey.currentState?.validate() ?? false) {
+              Navigator.of(context).pop(value);
+            }
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(controller.text.cancel),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (formKey.currentState?.validate() ?? false) {
+              Navigator.of(context).pop(value);
+            }
+          },
+          child: Text(controller.text.save),
+        ),
+      ],
+    ),
+  );
+  if (result != null) {
+    await controller.renameTransferFile(transfer, result);
+  }
+  textController.dispose();
 }

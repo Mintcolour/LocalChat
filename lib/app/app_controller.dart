@@ -143,6 +143,7 @@ class AppController extends ChangeNotifier {
   String get themeModeCode => settings.themeModeCode;
   set themeModeCode(String value) => settings.themeModeCode = value;
   set languageCode(String value) => settings.languageCode = value;
+  int get localListenPort => transportService.port;
 
   Future<void> initialize() async {
     busy = true;
@@ -818,6 +819,30 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<List<String>> loadLocalNetworkEndpoints() async {
+    final port = localListenPort;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
+      final endpoints = <String>{};
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          if (address.type != InternetAddressType.IPv4 || address.isLoopback) {
+            continue;
+          }
+          final ip = address.address.trim();
+          if (ip.isEmpty) continue;
+          endpoints.add(port > 0 ? '$ip:$port' : ip);
+        }
+      }
+      return endpoints.toList()..sort();
+    } on SocketException {
+      return const [];
+    }
+  }
+
   Future<void> retryMessage(ChatMessage message) async {
     if (message.direction != 'out' || message.status != 'failed') return;
     final peer = await db.getDevice(message.peerDeviceId);
@@ -900,8 +925,15 @@ class AppController extends ChangeNotifier {
 
   bool canRenameMessageFile(ChatMessage message, Transfer? transfer) {
     return message.direction == 'in' &&
-        transfer?.status == 'received' &&
-        (transfer?.savedPath != null || transfer?.savedUri != null);
+        message.transferId == transfer?.id &&
+        transfer != null &&
+        canRenameTransfer(transfer);
+  }
+
+  bool canRenameTransfer(Transfer transfer) {
+    return transfer.direction == 'in' &&
+        transfer.status == 'received' &&
+        transfer.savedPath != null;
   }
 
   Future<bool> renameMessageFile(
@@ -909,9 +941,16 @@ class AppController extends ChangeNotifier {
     Transfer transfer,
     String newFileName,
   ) async {
-    final transferId = message.transferId;
+    if (message.direction != 'in' || message.transferId != transfer.id) {
+      return false;
+    }
+    return renameTransferFile(transfer, newFileName);
+  }
+
+  Future<bool> renameTransferFile(Transfer transfer, String newFileName) async {
+    final transferId = transfer.id;
     final savedPath = transfer.savedPath;
-    if (transferId == null || savedPath == null) return false;
+    if (!canRenameTransfer(transfer) || savedPath == null) return false;
     final validation = FileStore.validateFileName(newFileName);
     if (validation != null) {
       lastError = 'invalid_file_name:$validation';
@@ -925,14 +964,14 @@ class AppController extends ChangeNotifier {
     _beginOperation('rename:$transferId');
     notifyListeners();
     try {
-      final peer = await db.getDevice(message.peerDeviceId);
+      final peer = await db.getDevice(transfer.peerDeviceId);
       final renamed = await fileStore.renameSavedFile(
         currentPath: savedPath,
         currentUri: transfer.savedUri,
         newFileName: newFileName,
         conversationFolder: FileStore.conversationFolder(
-          peer?.displayName ?? message.peerDeviceId,
-          message.peerDeviceId,
+          peer?.displayName ?? transfer.peerDeviceId,
+          transfer.peerDeviceId,
         ),
         at: transfer.createdAt,
         relativePath: transfer.relativePath,

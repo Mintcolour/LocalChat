@@ -76,6 +76,18 @@ void main() {
       final openFinder = find.byIcon(Icons.open_in_new);
       expect(nameFinder, findsOneWidget);
       expect(retryFinder, findsOneWidget);
+      final onPrimary = Theme.of(
+        tester.element(nameFinder),
+      ).colorScheme.onPrimary;
+      expect(tester.widget<Text>(nameFinder).style?.color, onPrimary);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.open_in_new),
+            )
+            .color,
+        onPrimary,
+      );
       expect(tester.takeException(), isNull);
       expect(
         tester.getTopLeft(openFinder).dy,

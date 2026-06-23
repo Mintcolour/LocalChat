@@ -7,6 +7,7 @@ import 'package:localchat/app/app_controller.dart';
 import 'package:localchat/core/device_profile.dart';
 import 'package:localchat/core/file_types.dart';
 import 'package:localchat/data/app_database.dart';
+import 'package:localchat/services/file_store.dart';
 
 void main() {
   test('default nickname is stable and platform specific', () {
@@ -119,6 +120,75 @@ void main() {
   });
 
   test(
+    'controller transfer rename updates saved transfer and message',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final fileStore = _RenameOnlyFileStore();
+      final controller = AppController(database: db, fileStore: fileStore);
+      addTearDown(controller.dispose);
+      final now = DateTime.utc(2026, 6, 22);
+      await db.trustDevice(
+        id: 'peer-1',
+        displayName: 'Phone',
+        platform: 'android',
+        host: '127.0.0.1',
+        port: 1,
+        signingPublicKey: 's',
+        exchangePublicKey: 'e',
+        fingerprint: 'f',
+        avatarSeed: 'seed',
+        avatarColor: '#2563EB',
+      );
+      await db
+          .into(db.chatMessages)
+          .insert(
+            ChatMessagesCompanion.insert(
+              id: 'message-1',
+              conversationId: 'peer:peer-1',
+              peerDeviceId: 'peer-1',
+              direction: 'in',
+              kind: 'file',
+              fileName: const Value('old.pdf'),
+              mimeType: const Value('application/pdf'),
+              status: 'received',
+              transferId: const Value('transfer-1'),
+              createdAt: now,
+            ),
+          );
+      await db
+          .into(db.transfers)
+          .insert(
+            TransfersCompanion.insert(
+              id: 'transfer-1',
+              peerDeviceId: 'peer-1',
+              direction: 'in',
+              fileName: 'old.pdf',
+              fileSize: 10,
+              mimeType: const Value('application/pdf'),
+              status: 'received',
+              savedPath: const Value(r'C:\Downloads\old.pdf'),
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+
+      final transfer = (await db.listTransfersByIds(['transfer-1'])).single;
+      final ok = await controller.renameTransferFile(transfer, 'new.pdf');
+
+      expect(ok, isTrue);
+      expect(fileStore.currentPath, r'C:\Downloads\old.pdf');
+      final renamedTransfer = (await db.listTransfersByIds([
+        'transfer-1',
+      ])).single;
+      final renamedMessage = (await db.listMessages('peer:peer-1')).single;
+      expect(renamedTransfer.fileName, 'new.pdf');
+      expect(renamedTransfer.savedPath, r'C:\Downloads\new.pdf');
+      expect(renamedMessage.fileName, 'new.pdf');
+      expect(renamedMessage.filePath, r'C:\Downloads\new.pdf');
+    },
+  );
+
+  test(
     'migration repairs a database whose column exists before version 4',
     () async {
       final dir = await Directory.systemTemp.createTemp('localchat-migration');
@@ -189,4 +259,28 @@ void main() {
     expect(controller.themeModeCode, 'dark');
     expect(await db.getSetting('theme_mode'), 'dark');
   });
+}
+
+class _RenameOnlyFileStore extends FileStore {
+  String? currentPath;
+
+  @override
+  Future<RenamedFile> renameSavedFile({
+    required String currentPath,
+    String? currentUri,
+    required String newFileName,
+    required String conversationFolder,
+    required DateTime at,
+    String? relativePath,
+  }) async {
+    this.currentPath = currentPath;
+    return RenamedFile(
+      fileName: newFileName,
+      mimeType: 'application/pdf',
+      relativePath: relativePath == null
+          ? null
+          : FileStore.replaceRelativeFileName(relativePath, newFileName),
+      path: r'C:\Downloads\' + newFileName,
+    );
+  }
 }

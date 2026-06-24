@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await delay(1000);
 
             // 发送文件 2 (APK)
-            await appendFileTransfer('LocalChat-v1.3.1.apk', '15.8 MB', 2800);
+            await appendFileTransfer('LocalChat-v1.3.2.apk', '15.8 MB', 2800);
             await delay(1200);
 
             // 接收回复

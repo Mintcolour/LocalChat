@@ -2,6 +2,26 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.2 - 2026-06-24
+
+### 中文
+
+- Windows 设置页新增默认存储路径配置，支持仅影响后续接收文件或迁移已索引的旧文件。
+- 旧文件迁移会保留原目录结构、避开重名覆盖，并在缺失或失败时继续保留旧路径引用。
+- 优化设备列表在线/离线分组、状态标识和长设备名显示。
+- 文件消息新增删除记录或同时删除本地文件的确认流程。
+- 简化设置页网络诊断入口，统一手动添加设备时的连接测试与排查文案。
+- 更新 Android、Windows 和展示页图标资源，并重新生成发布包。
+
+### English
+
+- Added Windows default storage path settings, with options to affect only future received files or migrate indexed existing files.
+- Existing-file migration preserves the folder layout, avoids overwriting conflicts, and keeps old path references when a file is missing or fails to move.
+- Improved device-list online/offline grouping, status indicators, and long device-name display.
+- Added file-message deletion choices for deleting only the record or deleting the local file too.
+- Simplified network diagnostics in settings and unified connectivity-test guidance during manual peer add.
+- Updated Android, Windows, and showcase icon assets, then rebuilt release packages.
+
 ## 1.3.1 - 2026-06-24
 
 ### 中文

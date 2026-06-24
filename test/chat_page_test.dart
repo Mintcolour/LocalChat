@@ -100,6 +100,13 @@ void main() {
     );
   });
 
+  test('unreadCount excludes messages exactly at lastReadAt', () async {
+    final t0 = DateTime.utc(2026, 6, 22, 10);
+    await seedMessage('at-read-time', at: t0, body: 'read boundary');
+
+    expect(await db.unreadCount('peer:peer-1', lastReadAt: t0), 0);
+  });
+
   test('searchMessages matches body or file name, capped at 100', () async {
     final t0 = DateTime.utc(2026, 6, 22, 10);
     await seedMessage('s1', at: t0, body: '请查看 report 最终版');

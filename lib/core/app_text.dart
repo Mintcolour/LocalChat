@@ -14,8 +14,10 @@ class AppText {
   String get rescan => en ? 'Rescan' : '重新搜索';
   String get settings => en ? 'Settings' : '设置';
   String get trustedDevices => en ? 'Trusted devices' : '已信任设备';
-  String get trustedDevicesOnline => en ? 'Trusted devices · Online' : '已信任设备 · 在线';
-  String get trustedDevicesOffline => en ? 'Trusted devices · Offline' : '已信任设备 · 离线';
+  String get trustedDevicesOnline =>
+      en ? 'Trusted devices · Online' : '已信任设备 · 在线';
+  String get trustedDevicesOffline =>
+      en ? 'Trusted devices · Offline' : '已信任设备 · 离线';
   String get noOnlineDevices => en ? 'No online devices' : '暂无在线设备';
   String get discoveredDevices => en ? 'Discovered devices' : '发现的设备';
   String get noTrustedDevices => en
@@ -43,8 +45,10 @@ class AppText {
   String get deleteConversationTitle => en ? 'Delete chat?' : '删除会话？';
   String get deleteFileConfirmTitle => en ? 'Delete File Message' : '删除文件消息确认';
   String get deleteRecordOnly => en ? 'Only delete record' : '仅删除记录';
-  String get deleteFileAndRecord => en ? 'Delete local file & record' : '删除本地文件与记录';
-  String get localFileNotExist => en ? 'Local file not saved or does not exist.' : '本地文件未保存或不存在';
+  String get deleteFileAndRecord =>
+      en ? 'Delete local file & record' : '删除本地文件与记录';
+  String get localFileNotExist =>
+      en ? 'Local file not saved or does not exist.' : '本地文件未保存或不存在';
   String get localFilePath => en ? 'Local file path: ' : '本地文件路径：';
   String get deleteFileMessageConfirmBody => en
       ? 'Are you sure you want to delete this file message?'
@@ -149,6 +153,14 @@ class AppText {
   String get startOnBootSubtitle => en
       ? 'Launch LocalChat automatically when Windows starts'
       : 'Windows 启动时自动运行 LocalChat';
+  String get quickSend => en ? 'Desktop quick drag-send' : '桌面快捷拖拽发送';
+  String get quickSendSubtitle => en
+      ? 'Show a bottom drop shelf for online trusted devices while dragging files'
+      : '拖动文件到屏幕底部时显示在线可信设备快捷发送区';
+  String get quickSendEnabled =>
+      en ? 'Desktop quick send enabled' : '已开启桌面快捷发送';
+  String get quickSendDisabled =>
+      en ? 'Desktop quick send disabled' : '已关闭桌面快捷发送';
   String get storageRootPath => en ? 'Default storage path' : '默认存储路径';
   String storageRootPathSubtitle(String path) =>
       en ? 'Received files are saved to:\n$path' : '收到的文件会保存到：\n$path';
@@ -218,6 +230,16 @@ class AppText {
   String get transferCanceledHint => en
       ? 'The peer version does not support canceling in-progress transfers.'
       : '对端版本不支持取消进行中的传输。';
+  String quickSendQueued(int count, String peerName) => en
+      ? '$count item(s) queued for $peerName'
+      : '已将 $count 个项目加入发给 $peerName 的传输队列';
+  String get quickSendNoValidPaths =>
+      en ? 'No valid files or folders to send' : '没有可发送的有效文件或文件夹';
+  String get quickSendTargetUnavailable =>
+      en ? 'The selected device is not online or trusted' : '目标设备不在线或不在信任列表中';
+  String quickSendFailed(String peerName) => en
+      ? '$peerName disconnected, quick send failed'
+      : '$peerName 连接断开，快捷发送失败';
   String get searchMessages => en ? 'Search messages' : '搜索消息';
   String get noResults => en ? 'No results' : '无结果';
   String searchResultLabel(int index, int total) =>

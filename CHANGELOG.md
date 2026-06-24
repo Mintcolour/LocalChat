@@ -2,6 +2,18 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.3 - 2026-06-24
+
+### 中文
+
+- 新增 Windows 快传托盘（Quick Drop Shelf）：将文件拖到悬浮设备卡片即可快速发送，无需打开主窗口。
+- 设置页新增快传开关，开启后自动同步在线设备列表，并在发送失败或目标离线时给出状态提示。
+
+### English
+
+- Added Windows Quick Drop Shelf: drag files onto a floating device card to send them instantly without opening the main window.
+- Added a quick-send toggle in settings; enabling it syncs the online device list and surfaces status feedback when a send fails or the target goes offline.
+
 ## 1.3.2 - 2026-06-24
 
 ### 中文

@@ -292,17 +292,15 @@ class _DevicePane extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           if (trusted.isEmpty) ...[
-            _SectionTitle(
-              title: controller.text.trustedDevices,
-              count: 0,
-            ),
+            _SectionTitle(title: controller.text.trustedDevices, count: 0),
             _EmptyHint(controller.text.noTrustedDevices),
           ] else ...[
             _SectionTitle(
               title: controller.text.trustedDevicesOnline,
               count: trustedOnline.length,
             ),
-            if (trustedOnline.isEmpty) _EmptyHint(controller.text.noOnlineDevices),
+            if (trustedOnline.isEmpty)
+              _EmptyHint(controller.text.noOnlineDevices),
             for (final device in trustedOnline)
               _DeviceTile(controller: controller, device: device),
             if (trustedOffline.isNotEmpty) ...[
@@ -474,10 +472,7 @@ class _DeviceTile extends StatelessWidget {
             controller.titleFor(device),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
         ),
         subtitle: Text(
@@ -544,11 +539,7 @@ class _PeerStatusBadge extends StatelessWidget {
             shape: BoxShape.circle,
             border: Border.all(color: scheme.surface, width: 0.5),
           ),
-          child: Icon(
-            icon,
-            size: 11,
-            color: color,
-          ),
+          child: Icon(icon, size: 11, color: color),
         ),
       ),
     );
@@ -1634,6 +1625,13 @@ Future<void> _showSettingsDialog(
                   value: controller.autostartEnabled,
                   onChanged: controller.setAutostartEnabled,
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(controller.text.quickSend),
+                  subtitle: Text(controller.text.quickSendSubtitle),
+                  value: controller.quickSendEnabled,
+                  onChanged: controller.setQuickSendEnabled,
+                ),
               ],
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1856,7 +1854,6 @@ Future<void> _showAddPeerDialog(
     ),
   );
 }
-
 
 class _NetworkDiagnosticResultCard extends StatelessWidget {
   const _NetworkDiagnosticResultCard({
@@ -2522,7 +2519,8 @@ Future<void> _showDeleteFileMessageDialog(
   Transfer? transfer,
 ) async {
   final filePath = transfer?.savedPath ?? message.filePath;
-  final hasLocalFile = filePath != null &&
+  final hasLocalFile =
+      filePath != null &&
       filePath.isNotEmpty &&
       (File(filePath).existsSync() || Directory(filePath).existsSync());
 

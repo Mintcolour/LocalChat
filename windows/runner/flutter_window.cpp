@@ -141,6 +141,59 @@ flutter::EncodableValue GetClipboardFiles(HWND hwnd) {
   return flutter::EncodableValue(list);
 }
 
+bool BoolFromMap(const flutter::EncodableMap& map,
+                 const char* key,
+                 bool fallback = false) {
+  auto it = map.find(flutter::EncodableValue(key));
+  if (it != map.end() && std::holds_alternative<bool>(it->second)) {
+    return std::get<bool>(it->second);
+  }
+  return fallback;
+}
+
+std::string StringFromMap(const flutter::EncodableMap& map, const char* key) {
+  auto it = map.find(flutter::EncodableValue(key));
+  if (it != map.end() && std::holds_alternative<std::string>(it->second)) {
+    return std::get<std::string>(it->second);
+  }
+  return "";
+}
+
+std::vector<QuickDropDevice> ParseQuickDropDevices(
+    const flutter::EncodableValue* args) {
+  std::vector<QuickDropDevice> devices;
+  if (args == nullptr) {
+    return devices;
+  }
+  const auto* map = std::get_if<flutter::EncodableMap>(args);
+  if (map == nullptr) {
+    return devices;
+  }
+  auto devices_it = map->find(flutter::EncodableValue("devices"));
+  if (devices_it == map->end() ||
+      !std::holds_alternative<flutter::EncodableList>(devices_it->second)) {
+    return devices;
+  }
+  const auto& list = std::get<flutter::EncodableList>(devices_it->second);
+  for (const auto& item : list) {
+    const auto* device_map = std::get_if<flutter::EncodableMap>(&item);
+    if (device_map == nullptr) {
+      continue;
+    }
+    QuickDropDevice device;
+    device.id = StringFromMap(*device_map, "id");
+    device.display_name = StringFromMap(*device_map, "displayName");
+    device.platform = StringFromMap(*device_map, "platform");
+    device.avatar_initial = StringFromMap(*device_map, "avatarInitial");
+    device.avatar_color = StringFromMap(*device_map, "avatarColor");
+    device.selected = BoolFromMap(*device_map, "selected");
+    if (!device.id.empty()) {
+      devices.push_back(device);
+    }
+  }
+  return devices;
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -198,6 +251,25 @@ bool FlutterWindow::OnCreate() {
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(), "localchat/window",
           &flutter::StandardMethodCodec::GetInstance());
+  quick_drop_shelf_.SetDropCallback(
+      [this](const std::string& device_id,
+             const std::vector<std::string>& paths) {
+        if (!window_channel_) {
+          return;
+        }
+        flutter::EncodableList path_list;
+        for (const auto& path : paths) {
+          path_list.emplace_back(path);
+        }
+        flutter::EncodableMap args;
+        args[flutter::EncodableValue("deviceId")] =
+            flutter::EncodableValue(device_id);
+        args[flutter::EncodableValue("paths")] =
+            flutter::EncodableValue(path_list);
+        window_channel_->InvokeMethod(
+            "quickDropFiles",
+            std::make_unique<flutter::EncodableValue>(args));
+      });
   window_channel->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
@@ -271,6 +343,24 @@ bool FlutterWindow::OnCreate() {
           result->Success();
           return;
         }
+        if (method == "setQuickSendEnabled") {
+          const auto* args = call.arguments();
+          bool enabled = false;
+          if (args != nullptr) {
+            const auto* map = std::get_if<flutter::EncodableMap>(args);
+            if (map != nullptr) {
+              enabled = BoolFromMap(*map, "enabled");
+            }
+          }
+          quick_drop_shelf_.SetEnabled(enabled, GetHandle());
+          result->Success();
+          return;
+        }
+        if (method == "updateQuickSendDevices") {
+          quick_drop_shelf_.UpdateDevices(ParseQuickDropDevices(call.arguments()));
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
   window_channel_ = std::move(window_channel);
@@ -290,6 +380,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  quick_drop_shelf_.Destroy();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

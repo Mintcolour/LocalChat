@@ -1,4 +1,4 @@
 0a63b01db5c533214388bc0f19fe60c1c03760de2d18414a06d839684f20fe0f  LocalChat-1.3.2-arm64-v8a.apk
 7bdee13d06a71b6e0fab492d603d5b79463acbd16a799fb86ee513f47d16ec9a  LocalChat-1.3.2-armeabi-v7a.apk
 ffabedd823f50108ef7c0c7502ceae90c43fe9362c1ef1e2cbaa4e24d2bcf875  LocalChat-1.3.2-x86_64.apk
-c58e912c64381a01bfb62ccd06a648c2415fee2739a56cbb7839fb658ff03414  LocalChat-1.3.2-windows-x64.zip
+e1790e2f8b8cbbd017ae4607d13795d4a9dd864f1b60f0dbbe41f074d5e0bcaf  LocalChat-1.3.3-windows-x64.zip

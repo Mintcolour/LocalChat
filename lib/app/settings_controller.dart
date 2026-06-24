@@ -10,6 +10,7 @@ const _languageCodeKey = 'language_code';
 const _themeModeKey = 'theme_mode';
 const _trayEnabledKey = 'tray_enabled';
 const _autostartEnabledKey = 'autostart_enabled';
+const _quickSendEnabledKey = 'quick_send_enabled';
 const _notificationsEnabledKey = 'notifications_enabled';
 const _notificationPreviewEnabledKey = 'notification_preview_enabled';
 const _keepAliveEnabledKey = 'android_keep_alive_enabled';
@@ -30,6 +31,7 @@ class SettingsController extends ChangeNotifier {
   bool autoCopyReceivedText = true;
   bool trayEnabled = true;
   bool autostartEnabled = false;
+  bool quickSendEnabled = false;
   bool notificationsEnabled = true;
   bool notificationPreviewEnabled = false;
   bool keepAliveEnabled = Platform.isAndroid;
@@ -48,6 +50,7 @@ class SettingsController extends ChangeNotifier {
         await db.getSetting(_autoCopyReceivedTextKey) != 'false';
     notificationsEnabled =
         await db.getSetting(_notificationsEnabledKey) != 'false';
+    quickSendEnabled = await db.getSetting(_quickSendEnabledKey) == 'true';
     notificationPreviewEnabled =
         await db.getSetting(_notificationPreviewEnabledKey) == 'true';
     final keepAliveRaw = await db.getSetting(_keepAliveEnabledKey);
@@ -121,6 +124,12 @@ class SettingsController extends ChangeNotifier {
     await windowService.setAutostartEnabled(value);
   }
 
+  Future<void> setQuickSendEnabled(bool value) async {
+    quickSendEnabled = value;
+    await db.setSetting(_quickSendEnabledKey, value ? 'true' : 'false');
+    await windowService.setQuickSendEnabled(value);
+  }
+
   /// 读取托盘/开机自启偏好，并与原生状态同步。仅 Windows 生效。
   Future<void> _loadWindowPreferences() async {
     if (!windowService.isSupported) return;
@@ -134,5 +143,6 @@ class SettingsController extends ChangeNotifier {
       await windowService.setAutostartEnabled(autostartEnabled);
     }
     await windowService.setTrayEnabled(trayEnabled);
+    await windowService.setQuickSendEnabled(quickSendEnabled);
   }
 }

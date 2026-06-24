@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "quick_drop_shelf.h"
 #include "tray.h"
 #include "win32_window.h"
 
@@ -37,6 +38,7 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
   TrayController tray_;
+  QuickDropShelf quick_drop_shelf_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

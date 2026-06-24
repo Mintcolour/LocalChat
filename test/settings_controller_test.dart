@@ -48,6 +48,7 @@ void main() {
     await settings.setNotificationsEnabled(false);
     await settings.setNotificationPreviewEnabled(true);
     await settings.setKeepAliveEnabled(true);
+    await settings.setQuickSendEnabled(true);
     await settings.setStorageRootPath(r'C:\LocalChatStore');
 
     expect(settings.languageCode, 'en');
@@ -56,6 +57,7 @@ void main() {
     expect(settings.notificationsEnabled, isFalse);
     expect(settings.notificationPreviewEnabled, isTrue);
     expect(settings.keepAliveEnabled, isTrue);
+    expect(settings.quickSendEnabled, isTrue);
     expect(settings.storageRootPath, r'C:\LocalChatStore');
 
     // 重新载入应从数据库恢复。
@@ -70,6 +72,7 @@ void main() {
     expect(reloaded.notificationsEnabled, isFalse);
     expect(reloaded.notificationPreviewEnabled, isTrue);
     expect(reloaded.keepAliveEnabled, isTrue);
+    expect(reloaded.quickSendEnabled, isTrue);
     expect(reloaded.storageRootPath, r'C:\LocalChatStore');
 
     await reloaded.resetStorageRootPath();

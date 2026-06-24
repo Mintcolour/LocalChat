@@ -9,12 +9,15 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/app_text.dart';
 import '../core/app_failure.dart';
+import '../core/device_profile.dart';
 import '../core/formatters.dart';
+import '../core/peer_status.dart';
 import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
 import '../models/notification_event.dart';
 import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
+import '../models/quick_send_device.dart';
 import '../models/transfer_views.dart';
 import '../models/chat_page.dart';
 import 'settings_controller.dart';
@@ -183,6 +186,7 @@ class AppController extends ChangeNotifier {
   bool get autoCopyReceivedText => settings.autoCopyReceivedText;
   bool get trayEnabled => settings.trayEnabled;
   bool get autostartEnabled => settings.autostartEnabled;
+  bool get quickSendEnabled => settings.quickSendEnabled;
   bool get notificationsEnabled => settings.notificationsEnabled;
   bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
   bool get keepAliveEnabled => settings.keepAliveEnabled;
@@ -204,6 +208,7 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       await settings.load();
+      await windowService.setQuickDropFilesHandler(handleQuickDropFiles);
       await _syncStorageRootFromSettings();
       if (settings.keepAliveEnabled && keepAliveService.isSupported) {
         await keepAliveService.start();
@@ -242,6 +247,7 @@ class AppController extends ChangeNotifier {
       );
       await _loadSharingIntents();
       await refresh();
+      unawaited(_syncQuickSendDevices());
       status = languageCode == 'en'
           ? 'Discovering LAN devices, local port $port'
           : '正在局域网内发现设备，本机端口 $port';
@@ -317,6 +323,7 @@ class AppController extends ChangeNotifier {
         }
       }
       await _loadConversationSummaries();
+      unawaited(_syncQuickSendDevices());
     } finally {
       _refreshInFlight = false;
     }
@@ -338,6 +345,7 @@ class AppController extends ChangeNotifier {
     _updateMessageCursor(page);
     await _ensureTransfersForCurrentMessages();
     await markConversationRead(device.id);
+    unawaited(_syncQuickSendDevices());
     notifyListeners();
     await _flushPendingShareIfPossible();
   }
@@ -454,6 +462,7 @@ class AppController extends ChangeNotifier {
     transfersById = {};
     messageCursor = null;
     hasMoreMessages = false;
+    unawaited(_syncQuickSendDevices());
     notifyListeners();
   }
 
@@ -462,6 +471,116 @@ class AppController extends ChangeNotifier {
         .where((item) => item.peerDeviceId == device.id)
         .firstOrNull;
     return conversation?.title ?? device.displayName;
+  }
+
+  List<QuickSendDeviceView> quickSendDeviceViews({DateTime? now}) {
+    final referenceNow = now ?? DateTime.now();
+    final selectedId = selectedDevice?.id;
+    final peers =
+        devices
+            .where(
+              (device) =>
+                  device.trusted &&
+                  device.identityChanged != true &&
+                  isPeerOnline(device, now: referenceNow),
+            )
+            .toList()
+          ..sort((a, b) {
+            final aSelected = a.id == selectedId;
+            final bSelected = b.id == selectedId;
+            if (aSelected != bSelected) return aSelected ? -1 : 1;
+            final aSeen = a.lastSeen ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final bSeen = b.lastSeen ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final byLastSeen = bSeen.compareTo(aSeen);
+            if (byLastSeen != 0) return byLastSeen;
+            return titleFor(
+              a,
+            ).toLowerCase().compareTo(titleFor(b).toLowerCase());
+          });
+    return [
+      for (final device in peers)
+        QuickSendDeviceView(
+          id: device.id,
+          displayName: titleFor(device),
+          platform: device.platform,
+          avatarInitial: avatarInitial(titleFor(device), device.platform),
+          avatarColor: device.avatarColor.isEmpty
+              ? avatarColorFor(device.avatarSeed)
+              : device.avatarColor,
+          selected: device.id == selectedId,
+        ),
+    ];
+  }
+
+  Future<void> _syncQuickSendDevices() async {
+    if (!settings.quickSendEnabled) {
+      await windowService.updateQuickSendDevices(const []);
+      return;
+    }
+    await windowService.updateQuickSendDevices(quickSendDeviceViews());
+  }
+
+  Future<void> handleQuickDropFiles(String deviceId, List<String> paths) async {
+    final peer = await db.getDevice(deviceId);
+    if (peer == null ||
+        !peer.trusted ||
+        peer.identityChanged == true ||
+        !isPeerOnline(peer)) {
+      status = text.quickSendTargetUnavailable;
+      await _syncQuickSendDevices();
+      notifyListeners();
+      return;
+    }
+
+    final files = <String>[];
+    final folders = <String>[];
+    for (final rawPath in paths) {
+      final path = rawPath.trim();
+      if (path.isEmpty) continue;
+      if (FileSystemEntity.isDirectorySync(path)) {
+        folders.add(path);
+      } else if (File(path).existsSync()) {
+        files.add(path);
+      }
+    }
+    final itemCount = files.length + folders.length;
+    if (itemCount == 0) {
+      status = text.quickSendNoValidPaths;
+      notifyListeners();
+      return;
+    }
+
+    lastError = null;
+    try {
+      if (files.isNotEmpty) {
+        await _sendFilesToPeer(
+          peer,
+          files,
+          refreshAfter: false,
+          updateStatus: false,
+          rethrowOnError: true,
+        );
+      }
+      for (final folder in folders) {
+        await _sendFolderToPeer(
+          peer,
+          folder,
+          refreshAfter: false,
+          updateStatus: false,
+          rethrowOnError: true,
+        );
+      }
+      await refresh();
+      status = text.quickSendQueued(itemCount, titleFor(peer));
+    } catch (error) {
+      lastError = '$error';
+      status = error is AppFailure
+          ? error.userMessage
+          : text.quickSendFailed(titleFor(peer));
+      await _syncQuickSendDevices();
+    } finally {
+      notifyListeners();
+    }
   }
 
   Future<void> renameSelectedConversation(String title) async {
@@ -498,7 +617,10 @@ class AppController extends ChangeNotifier {
     await refresh();
   }
 
-  Future<void> deleteFileMessage(ChatMessage message, bool deleteLocalFile) async {
+  Future<void> deleteFileMessage(
+    ChatMessage message,
+    bool deleteLocalFile,
+  ) async {
     if (deleteLocalFile) {
       final filePathsToDelete = <String>[];
       final String? pathOnDisk = message.filePath;
@@ -507,7 +629,9 @@ class AppController extends ChangeNotifier {
       }
       if (message.transferId != null && message.transferId!.isNotEmpty) {
         final transfer = transfersById[message.transferId];
-        if (transfer != null && transfer.savedPath != null && transfer.savedPath!.isNotEmpty) {
+        if (transfer != null &&
+            transfer.savedPath != null &&
+            transfer.savedPath!.isNotEmpty) {
           filePathsToDelete.add(transfer.savedPath!);
         }
       }
@@ -538,7 +662,6 @@ class AppController extends ChangeNotifier {
     status = languageCode == 'en' ? 'Message deleted' : '消息已删除';
     await refresh();
   }
-
 
   Future<void> setLanguageCode(String value) async {
     await settings.setLanguageCode(value);
@@ -839,6 +962,13 @@ class AppController extends ChangeNotifier {
         : (settings.languageCode == 'en'
               ? 'Start on boot disabled'
               : '已关闭开机自启');
+    notifyListeners();
+  }
+
+  Future<void> setQuickSendEnabled(bool value) async {
+    await settings.setQuickSendEnabled(value);
+    await _syncQuickSendDevices();
+    status = value ? text.quickSendEnabled : text.quickSendDisabled;
     notifyListeners();
   }
 
@@ -1218,6 +1348,16 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    await _sendFolderToPeer(peer, folderPath);
+  }
+
+  Future<void> _sendFolderToPeer(
+    Device peer,
+    String folderPath, {
+    bool refreshAfter = true,
+    bool updateStatus = true,
+    bool rethrowOnError = false,
+  }) async {
     final rootName = p.basename(folderPath);
     final entries = <({String absolute, String relative})>[];
     try {
@@ -1233,36 +1373,61 @@ class AppController extends ChangeNotifier {
         }
       }
     } catch (error) {
-      lastError = '$error';
-      status = languageCode == 'en'
+      final message = languageCode == 'en'
           ? 'Failed to read folder $rootName'
           : '读取文件夹 $rootName 失败';
+      lastError = '$error';
+      if (!updateStatus) {
+        throw AppFailure(
+          code: 'folder_read_failed',
+          userMessage: message,
+          cause: error,
+        );
+      }
+      status = message;
       notifyListeners();
       return;
     }
     if (entries.isEmpty) {
-      status = languageCode == 'en'
+      final message = languageCode == 'en'
           ? 'Folder $rootName is empty'
           : '文件夹 $rootName 为空';
-      notifyListeners();
+      if (!updateStatus) {
+        throw AppFailure(code: 'folder_empty', userMessage: message);
+      }
+      if (updateStatus) {
+        status = message;
+        notifyListeners();
+      }
       return;
     }
     entries.sort((a, b) => a.relative.compareTo(b.relative));
     try {
       await transportService.sendFolder(peer, rootName, entries);
-      await refresh();
-      status = languageCode == 'en'
-          ? 'Folder $rootName queued for ${titleFor(peer)}'
-          : '已将文件夹 $rootName 加入发给 ${titleFor(peer)} 的传输队列';
+      if (refreshAfter) {
+        await refresh();
+      }
+      if (updateStatus) {
+        status = languageCode == 'en'
+            ? 'Folder $rootName queued for ${titleFor(peer)}'
+            : '已将文件夹 $rootName 加入发给 ${titleFor(peer)} 的传输队列';
+      }
     } catch (error) {
       lastError = '$error';
-      status = error is AppFailure
-          ? error.userMessage
-          : (languageCode == 'en'
-                ? '${titleFor(peer)} disconnected, folder transfer failed'
-                : '${titleFor(peer)} 连接断开，文件夹发送失败');
+      if (updateStatus) {
+        status = error is AppFailure
+            ? error.userMessage
+            : (languageCode == 'en'
+                  ? '${titleFor(peer)} disconnected, folder transfer failed'
+                  : '${titleFor(peer)} 连接断开，文件夹发送失败');
+      }
+      if (rethrowOnError) {
+        rethrow;
+      }
     } finally {
-      notifyListeners();
+      if (updateStatus) {
+        notifyListeners();
+      }
     }
   }
 
@@ -1276,21 +1441,42 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    await _sendFilesToPeer(peer, paths);
+  }
+
+  Future<void> _sendFilesToPeer(
+    Device peer,
+    List<String> paths, {
+    bool refreshAfter = true,
+    bool updateStatus = true,
+    bool rethrowOnError = false,
+  }) async {
     try {
       await transportService.sendFiles(peer, paths);
-      await refresh();
-      status = languageCode == 'en'
-          ? '${paths.length} file(s) queued for ${titleFor(peer)}'
-          : '已将 ${paths.length} 个文件加入发给 ${titleFor(peer)} 的传输队列';
+      if (refreshAfter) {
+        await refresh();
+      }
+      if (updateStatus) {
+        status = languageCode == 'en'
+            ? '${paths.length} file(s) queued for ${titleFor(peer)}'
+            : '已将 ${paths.length} 个文件加入发给 ${titleFor(peer)} 的传输队列';
+      }
     } catch (error) {
       lastError = '$error';
-      status = error is AppFailure
-          ? error.userMessage
-          : (languageCode == 'en'
-                ? '${titleFor(peer)} disconnected, file transfer failed'
-                : '${titleFor(peer)} 连接断开，文件发送失败');
+      if (updateStatus) {
+        status = error is AppFailure
+            ? error.userMessage
+            : (languageCode == 'en'
+                  ? '${titleFor(peer)} disconnected, file transfer failed'
+                  : '${titleFor(peer)} 连接断开，文件发送失败');
+      }
+      if (rethrowOnError) {
+        rethrow;
+      }
     } finally {
-      notifyListeners();
+      if (updateStatus) {
+        notifyListeners();
+      }
     }
   }
 
@@ -1764,6 +1950,7 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(windowService.setQuickDropFilesHandler(null));
     _transportSub?.cancel();
     _notificationSub?.cancel();
     _notificationEventSub?.cancel();

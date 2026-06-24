@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/app_database.dart';
@@ -8,6 +10,9 @@ const _languageCodeKey = 'language_code';
 const _themeModeKey = 'theme_mode';
 const _trayEnabledKey = 'tray_enabled';
 const _autostartEnabledKey = 'autostart_enabled';
+const _notificationsEnabledKey = 'notifications_enabled';
+const _notificationPreviewEnabledKey = 'notification_preview_enabled';
+const _keepAliveEnabledKey = 'android_keep_alive_enabled';
 
 /// 设置子控制器：负责语言、外观、自动复制、托盘、开机自启偏好的持久化与原生同步。
 ///
@@ -24,6 +29,9 @@ class SettingsController extends ChangeNotifier {
   bool autoCopyReceivedText = true;
   bool trayEnabled = true;
   bool autostartEnabled = false;
+  bool notificationsEnabled = true;
+  bool notificationPreviewEnabled = false;
+  bool keepAliveEnabled = Platform.isAndroid;
   String languageCode = 'zh';
   String themeModeCode = 'system';
 
@@ -36,6 +44,14 @@ class SettingsController extends ChangeNotifier {
         : 'system';
     autoCopyReceivedText =
         await db.getSetting(_autoCopyReceivedTextKey) != 'false';
+    notificationsEnabled =
+        await db.getSetting(_notificationsEnabledKey) != 'false';
+    notificationPreviewEnabled =
+        await db.getSetting(_notificationPreviewEnabledKey) == 'true';
+    final keepAliveRaw = await db.getSetting(_keepAliveEnabledKey);
+    keepAliveEnabled = keepAliveRaw == null
+        ? Platform.isAndroid
+        : keepAliveRaw != 'false';
     await _loadWindowPreferences();
   }
 
@@ -54,6 +70,24 @@ class SettingsController extends ChangeNotifier {
   Future<void> setAutoCopyReceivedText(bool value) async {
     autoCopyReceivedText = value;
     await db.setSetting(_autoCopyReceivedTextKey, value ? 'true' : 'false');
+  }
+
+  Future<void> setNotificationsEnabled(bool value) async {
+    notificationsEnabled = value;
+    await db.setSetting(_notificationsEnabledKey, value ? 'true' : 'false');
+  }
+
+  Future<void> setNotificationPreviewEnabled(bool value) async {
+    notificationPreviewEnabled = value;
+    await db.setSetting(
+      _notificationPreviewEnabledKey,
+      value ? 'true' : 'false',
+    );
+  }
+
+  Future<void> setKeepAliveEnabled(bool value) async {
+    keepAliveEnabled = value;
+    await db.setSetting(_keepAliveEnabledKey, value ? 'true' : 'false');
   }
 
   Future<void> setTrayEnabled(bool value) async {

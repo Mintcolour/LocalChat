@@ -1,4 +1,5 @@
 import '../data/app_database.dart';
+import '../models/network_diagnostic.dart';
 import 'peer_status.dart';
 
 class AppText {
@@ -62,6 +63,20 @@ class AppText {
   String get autoCopyReceivedTextSubtitle => en
       ? 'Copy received text or links to the system clipboard'
       : '收到文字或链接时自动复制到系统剪贴板';
+  String get systemNotifications => en ? 'System notifications' : '系统消息通知';
+  String get systemNotificationsSubtitle => en
+      ? 'Show Windows/Android notifications when LocalChat is in the background'
+      : 'LocalChat 在后台、最小化或托盘运行时显示系统通知';
+  String get notificationPreview =>
+      en ? 'Show notification content preview' : '通知显示内容预览';
+  String get notificationPreviewSubtitle => en
+      ? 'Off by default: notifications only show sender and message type'
+      : '默认关闭：通知只显示发送者和消息/文件类型，避免锁屏泄露内容';
+  String get keepAliveConnection =>
+      en ? 'Keep background connection alive' : '后台保持连接';
+  String get keepAliveConnectionSubtitle => en
+      ? 'Android only: keep LAN listening and discovery running with a persistent notification. Turning it off reduces background reliability.'
+      : '仅 Android：通过常驻通知保持局域网监听和发现。关闭后后台收消息可靠性会下降。';
   String get clearHistory => en ? 'Clear chat history' : '清空聊天记录';
   String get clearHistorySubtitle => en
       ? 'Delete all chats and messages. Files on disk are kept.'
@@ -75,6 +90,21 @@ class AppText {
   String get allow => en ? 'Allow' : '允许';
   String get verificationCode => en ? 'Code' : '校验码';
   String get fingerprint => en ? 'Fingerprint' : '指纹';
+  String get securePairRequest => en ? 'Secure pairing request' : '安全配对请求';
+  String get firstConnectionConfirmCode => en
+      ? 'First connection. Confirm the 6-digit security code:'
+      : '首次连接，请确认 6 位安全校验码：';
+  String get trustedChannelEstablished =>
+      en ? 'Trusted encrypted channel established' : '已建立可信安全加密通道';
+  String get pairRequestRejected => en ? 'Pairing request rejected' : '已拒绝配对请求';
+  String get pairRequestExpired => en ? 'Pairing request expired' : '配对请求已超时';
+  String get pairRequestPending =>
+      en ? 'Pending secure pairing confirmation' : '等待确认安全配对';
+  String pairRequestNotificationBody(String name) => en
+      ? '$name requests secure pairing. Open LocalChat to confirm the code.'
+      : '$name 请求安全配对，打开 LocalChat 确认校验码。';
+  String get notificationNewMessage => en ? 'New LocalChat message' : '收到一条新消息';
+  String get notificationNewFile => en ? 'New LocalChat file' : '收到一个文件';
   String get chooseFile => en ? 'Choose files' : '选择文件';
   String get pasteFileOrImage => en ? 'Paste file or image' : '粘贴文件或图片';
   String get inputHint =>
@@ -112,8 +142,24 @@ class AppText {
   String get addPeerManuallySubtitle => en
       ? 'Connect to a peer on another subnet by IP and port'
       : '通过 IP 和端口连接其他网段的设备';
+  String get campusNetworkDiagnostic =>
+      en ? 'Campus network connection test' : '校园网连接测试';
+  String get campusNetworkDiagnosticSubtitle => en
+      ? 'Test whether a peer IP and port can reach LocalChat directly'
+      : '测试对方 IP 和端口是否能直连 LocalChat，并给出排查建议';
+  String get runNetworkDiagnostic => en ? 'Test connection' : '连接测试';
+  String get testBeforeAddPeer => en ? 'Test first' : '先测试连接';
+  String get networkDiagnosticResult => en ? 'Diagnostic result' : '诊断结果';
+  String get networkDiagnosticAdvice => en ? 'Suggested checks' : '排查建议';
+  String get networkDiagnosticLocalAddress =>
+      en ? 'My visible addresses' : '本机可用地址';
+  String get networkDiagnosticNoLocalAddress =>
+      en ? 'No non-loopback IPv4 address was detected.' : '未检测到非本机回环的 IPv4 地址。';
   String get peerHost => en ? 'Peer IP / host' : '对方 IP / 主机';
   String get peerPort => en ? 'Port' : '端口';
+  String get networkDiagnosticPortHelper => en
+      ? "Use the port shown in the peer's LocalChat settings."
+      : 'LocalChat 默认随机监听端口，请以对方设置页显示为准';
   String get add => en ? 'Add' : '添加';
   String get transferCenter => en ? 'Transfer center' : '传输中心';
   String get transferCenterSubtitle =>
@@ -181,4 +227,72 @@ class AppText {
 
   String statusWithError(String status, String error) =>
       en ? '$status: $error' : '$status：$error';
+
+  String networkDiagnosticSummary(NetworkDiagnosticResult result) {
+    switch (result.status) {
+      case NetworkDiagnosticStatus.reachable:
+        final name = result.peer?.displayName ?? result.endpoint;
+        return en
+            ? 'Reachable: $name is a LocalChat device.'
+            : '可连接：$name 是 LocalChat 设备。';
+      case NetworkDiagnosticStatus.invalidInput:
+        return en ? 'Invalid IP or port.' : 'IP 或端口无效。';
+      case NetworkDiagnosticStatus.timeout:
+        return en
+            ? 'Timed out when connecting to ${result.endpoint}.'
+            : '连接 ${result.endpoint} 超时。';
+      case NetworkDiagnosticStatus.connectionRefused:
+        return en
+            ? '${result.endpoint} refused the connection.'
+            : '${result.endpoint} 拒绝连接。';
+      case NetworkDiagnosticStatus.networkUnreachable:
+        return en
+            ? '${result.endpoint} is unreachable from this network.'
+            : '当前网络无法到达 ${result.endpoint}。';
+      case NetworkDiagnosticStatus.nonLocalChat:
+        return en
+            ? '${result.endpoint} is reachable, but it is not LocalChat.'
+            : '${result.endpoint} 可达，但不是 LocalChat 服务。';
+      case NetworkDiagnosticStatus.identityMismatch:
+        return en
+            ? '${result.endpoint} replied, but identity validation failed.'
+            : '${result.endpoint} 有响应，但身份校验失败。';
+      case NetworkDiagnosticStatus.unknownError:
+        return en ? 'Could not complete the connection test.' : '无法完成连接测试。';
+    }
+  }
+
+  String networkDiagnosticAdviceFor(NetworkDiagnosticResult result) {
+    switch (result.status) {
+      case NetworkDiagnosticStatus.reachable:
+        return en
+            ? 'Direct TCP works. If auto-discovery still fails, the network is likely blocking UDP broadcast; add the peer manually with this IP and port.'
+            : '直连 TCP 正常。如果仍然自动搜索不到，通常是 UDP 广播被跨网段/VLAN 拦截；直接用这个 IP 和端口手动添加即可。';
+      case NetworkDiagnosticStatus.invalidInput:
+        return en
+            ? 'Enter the peer address shown in LocalChat settings, for example 172.30.72.176:40123.'
+            : '请输入对方设置页显示的地址，例如 172.30.72.176:40123。';
+      case NetworkDiagnosticStatus.timeout:
+      case NetworkDiagnosticStatus.networkUnreachable:
+        return en
+            ? 'Common on campus networks: wired and Wi-Fi clients may be in different VLANs or client isolation may block device-to-device traffic. Try the same phone hotspot/PC hotspot first; if that works, the campus network is blocking direct LAN access.'
+            : '校园网常见原因：宿舍有线和 Wi-Fi 被分到不同 VLAN，或开启客户端隔离，终端之间不能互访。先让两台设备接同一个手机热点/电脑热点验证；如果热点可用，就是校园网阻断了直连。';
+      case NetworkDiagnosticStatus.connectionRefused:
+        return en
+            ? 'The target IP is reachable but the port is not accepting connections. Make sure LocalChat is open on the peer, use the peer settings page port, and allow LocalChat through the OS firewall.'
+            : '目标 IP 可达，但端口没有接受连接。确认对方 LocalChat 正在运行、端口填写的是对方设置页显示的端口，并在系统防火墙中放行 LocalChat 入站连接。';
+      case NetworkDiagnosticStatus.nonLocalChat:
+        return en
+            ? 'The IP/port is answering, but not with the LocalChat protocol. Recheck the peer IP and port shown in Settings.'
+            : '这个 IP/端口有响应，但不是 LocalChat 协议。请重新核对对方设置页里的 IP 和端口。';
+      case NetworkDiagnosticStatus.identityMismatch:
+        return en
+            ? 'Do not pair with this endpoint. The identity payload is inconsistent; recheck the address and reinstall/re-pair only after confirming the device.'
+            : '不要和这个端点配对。对方身份数据不自洽；请核对地址，确认设备后再重新配对。';
+      case NetworkDiagnosticStatus.unknownError:
+        return en
+            ? 'Retry after confirming both devices are on the same network. If it only fails on campus Wi-Fi/wired LAN, direct device-to-device access is likely blocked.'
+            : '确认两台设备在同一网络后重试。如果只在校园 Wi-Fi/宿舍网口失败，大概率是校园网禁止终端互访。';
+    }
+  }
 }

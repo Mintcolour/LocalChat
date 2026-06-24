@@ -16,8 +16,9 @@ import 'package:uuid/uuid.dart';
 
 import '../core/app_failure.dart';
 import '../core/formatters.dart';
-import '../core/device_profile.dart';
 import '../data/app_database.dart';
+import '../models/network_diagnostic.dart';
+import '../models/notification_event.dart';
 import '../models/protocol.dart';
 import '../models/transfer_views.dart';
 import 'file_store.dart';
@@ -55,6 +56,8 @@ class TransportService {
   final _uuid = const Uuid();
   final _updates = StreamController<void>.broadcast();
   final _notifications = StreamController<String>.broadcast();
+  final _notificationEvents =
+      StreamController<AppNotificationEvent>.broadcast();
   final _pairRequests = StreamController<PendingPairRequest>.broadcast();
   final Map<String, Completer<bool>> _pendingPairApprovals = {};
   final Map<String, DateTime> _lastProgressPersistedAt = {};
@@ -76,6 +79,8 @@ class TransportService {
   int get port => _port;
   Stream<void> get updates => _updates.stream;
   Stream<String> get notifications => _notifications.stream;
+  Stream<AppNotificationEvent> get notificationEvents =>
+      _notificationEvents.stream;
   Stream<PendingPairRequest> get pairRequests => _pairRequests.stream;
 
   bool isOutboundActive(String transferId) =>
@@ -240,6 +245,19 @@ class TransportService {
     }
     var approved = existing?.trusted == true;
     if (!approved) {
+      await _db.upsertDiscoveredDevice(
+        id: deviceId,
+        displayName: displayName,
+        platform: _string(body['platform'], 'unknown'),
+        host: host,
+        port: port,
+        signingPublicKey: signingPublicKey,
+        exchangePublicKey: exchangePublicKey,
+        fingerprint: fingerprint,
+        avatarSeed: avatarSeed,
+        avatarColor: avatarColor,
+        capabilities: _capabilitiesFrom(body['capabilities']),
+      );
       final requestId = _uuid.v4();
       final completer = Completer<bool>();
       _pendingPairApprovals[requestId] = completer;
@@ -393,53 +411,96 @@ class TransportService {
   /// 命中 /v1/hello 后以 endpointSource='manual' 落库（未信任，等待配对确认）。
   /// 返回落库后的设备；连接失败或非本协议返回 null。
   Future<Device?> fetchPeerIdentity(String host, int port) async {
+    final probe = await probeHello(host, port);
+    final peer = probe.peer;
+    if (probe.status != NetworkDiagnosticStatus.reachable || peer == null) {
+      return null;
+    }
     try {
-      final response = await _dio.getUri<Map<String, dynamic>>(
-        Uri.parse('http://$host:$port/v1/hello'),
-      );
-      final data = response.data;
-      if (data == null || data['protocol_version'] != protocolVersion) {
-        return null;
-      }
-      final deviceId = data['device_id'];
-      if (deviceId is! String || deviceId.isEmpty) return null;
-      final listenPort = data['listen_port'] is int
-          ? data['listen_port'] as int
-          : port;
-      final fingerprint = _string(data['public_key_fingerprint'], '');
-      final avatarSeed = _string(data['avatar_seed'], fingerprint);
-      final signingPublicKey = _string(data['signing_public_key'], '');
-      final exchangePublicKey = _string(data['exchange_public_key'], '');
-      // 校验对端身份自洽：拒绝 ID / 公钥 / 指纹不一致的设备。
-      try {
-        validatePeerIdentity(
-          deviceId: deviceId,
-          signingPublicKey: signingPublicKey,
-          fingerprint: fingerprint,
-        );
-      } catch (_) {
-        return null;
-      }
       await _db.upsertManualDevice(
-        id: deviceId,
-        displayName: _string(
-          data['nickname'],
-          _string(data['display_name'], 'Unknown'),
-        ),
-        platform: _string(data['platform'], 'unknown'),
+        id: peer.deviceId,
+        displayName: peer.displayName,
+        platform: peer.platform,
         host: host,
-        port: listenPort > 0 ? listenPort : port,
-        signingPublicKey: signingPublicKey,
-        exchangePublicKey: exchangePublicKey,
-        fingerprint: fingerprint,
-        avatarSeed: avatarSeed,
-        avatarColor: _string(data['avatar_color'], avatarColorFor(avatarSeed)),
-        capabilities: _capabilitiesFrom(data['capabilities']),
+        port: peer.port > 0 ? peer.port : port,
+        signingPublicKey: peer.signingPublicKey,
+        exchangePublicKey: peer.exchangePublicKey,
+        fingerprint: peer.fingerprint,
+        avatarSeed: peer.avatarSeed,
+        avatarColor: peer.avatarColor,
+        capabilities: peer.capabilities,
       );
       _updates.add(null);
-      return _db.getDevice(deviceId);
+      return _db.getDevice(peer.deviceId);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 只探测目标 /v1/hello，不落库。用于校园网/跨网段连接排查。
+  Future<NetworkDiagnosticResult> probeHello(String host, int port) async {
+    if (host.trim().isEmpty || port <= 0 || port > 65535) {
+      return NetworkDiagnosticResult(
+        host: host,
+        port: port,
+        status: NetworkDiagnosticStatus.invalidInput,
+      );
+    }
+    try {
+      final response = await _dio.getUri<dynamic>(
+        Uri.parse('http://$host:$port/v1/hello'),
+        options: dio.Options(
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
+      final data = response.data;
+      final map = data is Map
+          ? data.cast<String, Object?>()
+          : const <String, Object?>{};
+      final peer = DiscoveredPeer.fromJson(map, host);
+      if (peer == null) {
+        return NetworkDiagnosticResult(
+          host: host,
+          port: port,
+          status: NetworkDiagnosticStatus.nonLocalChat,
+          errorDetail: 'unexpected_response',
+        );
+      }
+      try {
+        validatePeerIdentity(
+          deviceId: peer.deviceId,
+          signingPublicKey: peer.signingPublicKey,
+          fingerprint: peer.fingerprint,
+        );
+      } catch (error) {
+        return NetworkDiagnosticResult(
+          host: host,
+          port: port,
+          status: NetworkDiagnosticStatus.identityMismatch,
+          errorDetail: '$error',
+        );
+      }
+      return NetworkDiagnosticResult(
+        host: host,
+        port: port,
+        status: NetworkDiagnosticStatus.reachable,
+        peer: peer,
+      );
+    } on dio.DioException catch (error) {
+      return NetworkDiagnosticResult(
+        host: host,
+        port: port,
+        status: _diagnosticStatusFromDio(error),
+        errorDetail: _diagnosticDetail(error),
+      );
+    } catch (error) {
+      return NetworkDiagnosticResult(
+        host: host,
+        port: port,
+        status: NetworkDiagnosticStatus.unknownError,
+        errorDetail: '$error',
+      );
     }
   }
 
@@ -1208,60 +1269,62 @@ class TransportService {
     return output.takeBytes();
   }
 
-  Future<Response> _receiveMessage(Request request) => _withTrustedEnvelope(
-    request,
-    (peer, payload) async {
-      final conversation = await _db.ensureConversation(peer);
-      final kind = _string(payload['kind'], 'text');
-      final body = _string(payload['body'], '');
-      await _db.addMessage(
-        ChatMessagesCompanion.insert(
-          id: _string(payload['id'], _uuid.v4()),
-          conversationId: conversation.id,
-          peerDeviceId: peer.id,
-          direction: 'in',
-          kind: kind,
-          body: Value(body),
-          status: 'received',
-          createdAt:
-              DateTime.tryParse(_string(payload['created_at'], '')) ??
-              DateTime.now(),
-        ),
-      );
-      if ((kind == 'text' || kind == 'link') &&
-          body.isNotEmpty &&
-          autoCopyReceivedText) {
-        try {
-          await Clipboard.setData(ClipboardData(text: body));
-          _notifications.add(
-            languageCode == 'en'
-                ? 'Received text from ${peer.displayName}, copied to clipboard'
-                : '收到 ${peer.displayName} 的文字，已复制到剪贴板',
-          );
-        } catch (_) {
-          _notifications.add(
-            languageCode == 'en'
-                ? 'Received text from ${peer.displayName}'
-                : '收到 ${peer.displayName} 的文字',
-          );
-        }
-      } else if ((kind == 'text' || kind == 'link') && body.isNotEmpty) {
-        _notifications.add(
-          languageCode == 'en'
-              ? 'Received text from ${peer.displayName}'
-              : '收到 ${peer.displayName} 的文字',
-        );
-      } else {
-        _notifications.add(
-          languageCode == 'en'
-              ? 'Received a message from ${peer.displayName}'
-              : '收到 ${peer.displayName} 的消息',
-        );
+  Future<Response> _receiveMessage(
+    Request request,
+  ) => _withTrustedEnvelope(request, (peer, payload) async {
+    final conversation = await _db.ensureConversation(peer);
+    final kind = _string(payload['kind'], 'text');
+    final body = _string(payload['body'], '');
+    await _db.addMessage(
+      ChatMessagesCompanion.insert(
+        id: _string(payload['id'], _uuid.v4()),
+        conversationId: conversation.id,
+        peerDeviceId: peer.id,
+        direction: 'in',
+        kind: kind,
+        body: Value(body),
+        status: 'received',
+        createdAt:
+            DateTime.tryParse(_string(payload['created_at'], '')) ??
+            DateTime.now(),
+      ),
+    );
+    final isTextLike = (kind == 'text' || kind == 'link') && body.isNotEmpty;
+    String notificationText;
+    if (isTextLike && autoCopyReceivedText) {
+      try {
+        await Clipboard.setData(ClipboardData(text: body));
+        notificationText = languageCode == 'en'
+            ? 'Received text from ${peer.displayName}, copied to clipboard'
+            : '收到 ${peer.displayName} 的文字，已复制到剪贴板';
+      } catch (_) {
+        notificationText = languageCode == 'en'
+            ? 'Received text from ${peer.displayName}'
+            : '收到 ${peer.displayName} 的文字';
       }
-      _updates.add(null);
-      return _json({'ok': true});
-    },
-  );
+    } else if (isTextLike) {
+      notificationText = languageCode == 'en'
+          ? 'Received text from ${peer.displayName}'
+          : '收到 ${peer.displayName} 的文字';
+    } else {
+      notificationText = languageCode == 'en'
+          ? 'Received a message from ${peer.displayName}'
+          : '收到 ${peer.displayName} 的消息';
+    }
+    _notifications.add(notificationText);
+    _notificationEvents.add(
+      AppNotificationEvent(
+        type: AppNotificationType.message,
+        title: peer.displayName,
+        privateBody: languageCode == 'en' ? 'New LocalChat message' : '收到一条新消息',
+        previewBody: isTextLike ? body : notificationText,
+        deviceId: peer.id,
+        conversationId: conversation.id,
+      ),
+    );
+    _updates.add(null);
+    return _json({'ok': true});
+  });
 
   Future<Response> _receiveTransferStart(Request request) =>
       _withTrustedEnvelope(request, (peer, payload) async {
@@ -1315,14 +1378,23 @@ class TransportService {
             createdAt: DateTime.now(),
           ),
         );
-        _notifications.add(
-          languageCode == 'en'
-              ? relativePath != null
-                    ? 'Received ${peer.displayName}: $relativePath'
-                    : 'Received file from ${peer.displayName}: $fileName'
-              : relativePath != null
-              ? '收到 ${peer.displayName}：$relativePath'
-              : '收到 ${peer.displayName} 的文件：$fileName',
+        final notificationText = languageCode == 'en'
+            ? relativePath != null
+                  ? 'Received ${peer.displayName}: $relativePath'
+                  : 'Received file from ${peer.displayName}: $fileName'
+            : relativePath != null
+            ? '收到 ${peer.displayName}：$relativePath'
+            : '收到 ${peer.displayName} 的文件：$fileName';
+        _notifications.add(notificationText);
+        _notificationEvents.add(
+          AppNotificationEvent(
+            type: AppNotificationType.file,
+            title: peer.displayName,
+            privateBody: languageCode == 'en' ? 'New LocalChat file' : '收到一个文件',
+            previewBody: relativePath ?? fileName,
+            deviceId: peer.id,
+            conversationId: conversation.id,
+          ),
         );
         _updates.add(null);
         return _json({'ok': true, 'path': file.path});
@@ -1773,6 +1845,51 @@ class TransportService {
           error.type == dio.DioExceptionType.sendTimeout;
     }
     return false;
+  }
+
+  NetworkDiagnosticStatus _diagnosticStatusFromDio(dio.DioException error) {
+    switch (error.type) {
+      case dio.DioExceptionType.connectionTimeout:
+      case dio.DioExceptionType.receiveTimeout:
+      case dio.DioExceptionType.sendTimeout:
+        return NetworkDiagnosticStatus.timeout;
+      case dio.DioExceptionType.badResponse:
+        return NetworkDiagnosticStatus.nonLocalChat;
+      case dio.DioExceptionType.connectionError:
+      case dio.DioExceptionType.unknown:
+        final detail = _diagnosticDetail(error).toLowerCase();
+        if (detail.contains('refused') ||
+            detail.contains('actively refused') ||
+            detail.contains('10061')) {
+          return NetworkDiagnosticStatus.connectionRefused;
+        }
+        if (detail.contains('unreachable') ||
+            detail.contains('no route') ||
+            detail.contains('10051') ||
+            detail.contains('101')) {
+          return NetworkDiagnosticStatus.networkUnreachable;
+        }
+        if (detail.contains('timed out') || detail.contains('10060')) {
+          return NetworkDiagnosticStatus.timeout;
+        }
+        return NetworkDiagnosticStatus.unknownError;
+      case dio.DioExceptionType.badCertificate:
+      case dio.DioExceptionType.cancel:
+        return NetworkDiagnosticStatus.unknownError;
+    }
+  }
+
+  String _diagnosticDetail(dio.DioException error) {
+    final inner = error.error;
+    if (inner is SocketException) {
+      final osError = inner.osError;
+      return osError == null
+          ? inner.message
+          : '${inner.message} (${osError.errorCode})';
+    }
+    final statusCode = error.response?.statusCode;
+    if (statusCode != null) return 'http_status_$statusCode';
+    return error.message ?? error.type.name;
   }
 
   Future<Map<String, Object?>> _readJson(Request request) async {

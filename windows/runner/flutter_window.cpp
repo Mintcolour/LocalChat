@@ -182,7 +182,10 @@ bool FlutterWindow::OnCreate() {
 
   // 托盘与窗口控制通道：最小化到托盘、显示、退出、开机自启开关。
   tray_.AddTrayIcon(GetHandle());
-  tray_.SetShowCallback([this]() { ShowWindow(GetHandle(), SW_SHOWNORMAL); });
+  tray_.SetShowCallback([this]() {
+    ShowWindow(GetHandle(), SW_SHOWNORMAL);
+    SetForegroundWindow(GetHandle());
+  });
   tray_.SetQuitCallback([this]() {
     tray_.RemoveTrayIcon();
     SetHideOnClose(false);
@@ -209,6 +212,14 @@ bool FlutterWindow::OnCreate() {
           ShowWindow(GetHandle(), SW_SHOWNORMAL);
           SetForegroundWindow(GetHandle());
           result->Success();
+          return;
+        }
+        if (method == "isForeground") {
+          const HWND handle = GetHandle();
+          const bool foreground =
+              handle != nullptr && IsWindowVisible(handle) &&
+              GetForegroundWindow() == handle;
+          result->Success(flutter::EncodableValue(foreground));
           return;
         }
         if (method == "quit") {

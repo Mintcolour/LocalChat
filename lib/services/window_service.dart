@@ -17,6 +17,8 @@ class WindowService {
     if (!isSupported) return;
     try {
       await _channel.invokeMethod<void>('minimizeToTray');
+    } on MissingPluginException {
+      // 测试或非原生 runner 环境。
     } on PlatformException {
       // 原生尚未实现时静默忽略。
     }
@@ -27,8 +29,22 @@ class WindowService {
     if (!isSupported) return;
     try {
       await _channel.invokeMethod<void>('show');
+    } on MissingPluginException {
+      // ignore
     } on PlatformException {
       // ignore
+    }
+  }
+
+  /// 查询 Windows 主窗口是否可见且位于前台。
+  Future<bool?> isForeground() async {
+    if (!isSupported) return null;
+    try {
+      return await _channel.invokeMethod<bool>('isForeground');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
     }
   }
 
@@ -37,6 +53,8 @@ class WindowService {
     if (!isSupported) return;
     try {
       await _channel.invokeMethod<void>('quit');
+    } on MissingPluginException {
+      // ignore
     } on PlatformException {
       // ignore
     }
@@ -48,6 +66,8 @@ class WindowService {
     try {
       final result = await _channel.invokeMethod<bool>('isAutostartEnabled');
       return result ?? false;
+    } on MissingPluginException {
+      return false;
     } on PlatformException {
       return false;
     }
@@ -57,7 +77,11 @@ class WindowService {
   Future<void> setAutostartEnabled(bool enabled) async {
     if (!isSupported) return;
     try {
-      await _channel.invokeMethod<void>('setAutostartEnabled', {'enabled': enabled});
+      await _channel.invokeMethod<void>('setAutostartEnabled', {
+        'enabled': enabled,
+      });
+    } on MissingPluginException {
+      // ignore
     } on PlatformException {
       // ignore
     }
@@ -68,6 +92,8 @@ class WindowService {
     if (!isSupported) return;
     try {
       await _channel.invokeMethod<void>('setTrayEnabled', {'enabled': enabled});
+    } on MissingPluginException {
+      // ignore
     } on PlatformException {
       // ignore
     }

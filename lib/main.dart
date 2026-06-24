@@ -1461,17 +1461,7 @@ Future<void> _showSettingsDialog(
                   );
                 },
               ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.network_check_outlined),
-                title: Text(controller.text.campusNetworkDiagnostic),
-                subtitle: Text(controller.text.campusNetworkDiagnosticSubtitle),
-                trailing: TextButton(
-                  onPressed: () =>
-                      _showNetworkDiagnosticDialog(context, controller),
-                  child: Text(controller.text.runNetworkDiagnostic),
-                ),
-              ),
+
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(controller.text.autoCopyReceivedText),
@@ -1737,99 +1727,6 @@ Future<void> _showAddPeerDialog(
   );
 }
 
-Future<void> _showNetworkDiagnosticDialog(
-  BuildContext context,
-  AppController controller,
-) async {
-  var host = '';
-  var port = '40123';
-  NetworkDiagnosticResult? diagnostic;
-  var diagnosing = false;
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setState) {
-        Future<void> runDiagnostic() async {
-          final portValue = int.tryParse(port);
-          if (host.isEmpty || portValue == null || portValue <= 0) {
-            setState(() {
-              diagnostic = NetworkDiagnosticResult(
-                host: host,
-                port: portValue ?? 0,
-                status: NetworkDiagnosticStatus.invalidInput,
-              );
-            });
-            return;
-          }
-          setState(() => diagnosing = true);
-          final result = await controller.checkManualPeerConnectivity(
-            host,
-            portValue,
-          );
-          if (!dialogContext.mounted) return;
-          setState(() {
-            diagnostic = result;
-            diagnosing = false;
-          });
-        }
-
-        return AlertDialog(
-          title: Text(controller.text.campusNetworkDiagnostic),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  decoration: InputDecoration(
-                    labelText: controller.text.peerHost,
-                    hintText: '172.30.72.176',
-                  ),
-                  onChanged: (value) => host = value.trim(),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  decoration: InputDecoration(
-                    labelText: controller.text.peerPort,
-                    helperText: controller.text.networkDiagnosticPortHelper,
-                  ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (value) => port = value.trim(),
-                ),
-                if (diagnostic != null) ...[
-                  const SizedBox(height: 12),
-                  _NetworkDiagnosticResultCard(
-                    controller: controller,
-                    result: diagnostic!,
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: diagnosing
-                  ? null
-                  : () => Navigator.of(dialogContext).pop(),
-              child: Text(controller.text.close),
-            ),
-            FilledButton.icon(
-              onPressed: diagnosing ? null : runDiagnostic,
-              icon: diagnosing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.network_check),
-              label: Text(controller.text.runNetworkDiagnostic),
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
 
 class _NetworkDiagnosticResultCard extends StatelessWidget {
   const _NetworkDiagnosticResultCard({

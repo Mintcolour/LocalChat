@@ -143,7 +143,7 @@ class AppText {
       ? 'Connect to a peer on another subnet by IP and port'
       : '通过 IP 和端口连接其他网段的设备';
   String get campusNetworkDiagnostic =>
-      en ? 'Campus network connection test' : '校园网连接测试';
+      en ? 'Local network connection test' : '局域网连接测试';
   String get campusNetworkDiagnosticSubtitle => en
       ? 'Test whether a peer IP and port can reach LocalChat directly'
       : '测试对方 IP 和端口是否能直连 LocalChat，并给出排查建议';
@@ -275,8 +275,8 @@ class AppText {
       case NetworkDiagnosticStatus.timeout:
       case NetworkDiagnosticStatus.networkUnreachable:
         return en
-            ? 'Common on campus networks: wired and Wi-Fi clients may be in different VLANs or client isolation may block device-to-device traffic. Try the same phone hotspot/PC hotspot first; if that works, the campus network is blocking direct LAN access.'
-            : '校园网常见原因：宿舍有线和 Wi-Fi 被分到不同 VLAN，或开启客户端隔离，终端之间不能互访。先让两台设备接同一个手机热点/电脑热点验证；如果热点可用，就是校园网阻断了直连。';
+            ? 'Common local network issue: devices may be on different subnets or AP/client isolation is enabled, blocking direct traffic. Try connecting both to the same phone/PC hotspot; if that works, the router or network provider is blocking direct device-to-device access.'
+            : '局域网常见连接失败原因：设备位于不同网段或开启了客户端/AP隔离，导致终端之间不能互访。建议尝试让两台设备接入同一个手机热点/电脑热点再测试；如果热点正常，说明当前网络环境阻断了局域网终端直接通信。';
       case NetworkDiagnosticStatus.connectionRefused:
         return en
             ? 'The target IP is reachable but the port is not accepting connections. Make sure LocalChat is open on the peer, use the peer settings page port, and allow LocalChat through the OS firewall.'
@@ -291,8 +291,8 @@ class AppText {
             : '不要和这个端点配对。对方身份数据不自洽；请核对地址，确认设备后再重新配对。';
       case NetworkDiagnosticStatus.unknownError:
         return en
-            ? 'Retry after confirming both devices are on the same network. If it only fails on campus Wi-Fi/wired LAN, direct device-to-device access is likely blocked.'
-            : '确认两台设备在同一网络后重试。如果只在校园 Wi-Fi/宿舍网口失败，大概率是校园网禁止终端互访。';
+            ? 'Retry after confirming both devices are on the same network. If it fails on public or corporate networks, direct device-to-device access is likely blocked.'
+            : '确认两台设备在同一网络后重试。如果在公共网络或企业局域网失败，大概率是当前网络环境禁止终端直接互访。';
     }
   }
 }

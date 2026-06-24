@@ -2,6 +2,24 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.1 - 2026-06-24
+
+### 中文
+
+- 优化配对流程：功能移至聊天内嵌卡片交互，并支持 65 秒超时过期及多并发配对请求管理。
+- 新增校园网网络诊断：手动添加设备时提供连接测试、网络状态分析和诊断引导。
+- 新增系统通知与后台保活配置：设置页支持管理通知状态（含消息预览开关）与后台保活。
+- 修复未读计数查询逻辑，解决当 lastReadAt 与消息生成时间完全一致时计入未读数的问题。
+- Windows 端增强前台状态检测，并拦截 MissingPluginException 异常提升测试环境兼容性。
+
+### English
+
+- Redesigned pairing workflow: replaced popup dialogs with inline chat cards, supporting 65s timeouts and concurrent requests.
+- Added campus network diagnostics: provides connectivity tests and troubleshooting advice during manual peer addition.
+- Added system notifications and keep-alive settings: supports native notifications (with message preview toggle) and background keep-alive.
+- Fixed unread counts when lastReadAt exactly matches a message's createdAt.
+- Enhanced Windows foreground state detection and caught MissingPluginException on method channels for test environments.
+
 ## 1.3.0 - 2026-06-23
 
 ### 中文

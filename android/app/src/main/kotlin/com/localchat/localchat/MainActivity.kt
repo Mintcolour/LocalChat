@@ -3,6 +3,7 @@ package com.localchat.localchat
 import android.content.ContentValues
 import android.content.Context
 import android.content.ClipboardManager
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -67,6 +68,38 @@ class MainActivity : FlutterActivity() {
                     result.error("clipboard_failed", error.message, null)
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "localchat/keep_alive")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "start" -> {
+                            startKeepAliveService()
+                            result.success(true)
+                        }
+                        "stop" -> {
+                            stopKeepAliveService()
+                            result.success(null)
+                        }
+                        "isRunning" -> result.success(LocalChatForegroundService.isRunning)
+                        else -> result.notImplemented()
+                    }
+                } catch (error: Throwable) {
+                    result.error("keep_alive_failed", error.message, null)
+                }
+            }
+    }
+
+    private fun startKeepAliveService() {
+        val intent = Intent(this, LocalChatForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopKeepAliveService() {
+        stopService(Intent(this, LocalChatForegroundService::class.java))
     }
 
     private fun saveFileToDownloads(

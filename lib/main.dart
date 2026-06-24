@@ -11,6 +11,7 @@ import 'core/file_types.dart';
 import 'core/formatters.dart';
 import 'core/peer_status.dart';
 import 'data/app_database.dart';
+import 'models/network_diagnostic.dart';
 import 'models/protocol.dart';
 import 'services/file_store.dart';
 import 'services/secure_key_store.dart';
@@ -71,17 +72,31 @@ class LocalChatHome extends StatefulWidget {
   State<LocalChatHome> createState() => _LocalChatHomeState();
 }
 
-class _LocalChatHomeState extends State<LocalChatHome> {
+class _LocalChatHomeState extends State<LocalChatHome>
+    with WidgetsBindingObserver {
   final _textController = TextEditingController();
   bool _dragging = false;
-  String? _shownPairRequestId;
   int _shownNotificationSerial = 0;
   int? _shownAttachmentBatchId;
 
   AppController get controller => widget.controller;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    controller.setAppForeground(true);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    controller.setAppForeground(state == AppLifecycleState.resumed);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    controller.setAppForeground(false);
     _textController.dispose();
     super.dispose();
   }
@@ -91,17 +106,6 @@ class _LocalChatHomeState extends State<LocalChatHome> {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
-        final pendingPair = controller.pendingPairRequest;
-        if (pendingPair == null) {
-          _shownPairRequestId = null;
-        } else if (_shownPairRequestId != pendingPair.id) {
-          _shownPairRequestId = pendingPair.id;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _showPairRequestDialog(context, controller, pendingPair);
-            }
-          });
-        }
         if (controller.notificationSerial != _shownNotificationSerial &&
             controller.notificationText != null) {
           _shownNotificationSerial = controller.notificationSerial;
@@ -393,6 +397,8 @@ class _DeviceTile extends StatelessWidget {
       lastMessage?.fileName,
     );
     final statusLabel = controller.text.peerStatus(device);
+    final hasPairRequest =
+        controller.pendingPairRequestForDevice(device.id) != null;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: ListTile(
@@ -463,6 +469,11 @@ class _DeviceTile extends StatelessWidget {
                       ),
                     )
                   : const Icon(Icons.chevron_right))
+            : hasPairRequest
+            ? Tooltip(
+                message: controller.text.pairRequestPending,
+                child: const Icon(Icons.lock_outline),
+              )
             : FilledButton.tonal(
                 onPressed: controller.busy
                     ? null
@@ -667,6 +678,8 @@ class _ChatPaneState extends State<_ChatPane> {
       return Center(child: Text(controller.text.selectDevice));
     }
     final online = isPeerOnline(peer);
+    final pairRequest = controller.pendingPairRequestForDevice(peer.id);
+    final pairingResult = controller.pairingResultForDevice(peer.id);
     return DropTarget(
       enable: peer.trusted,
       onDragEntered: (_) => widget.onDragState(true),
@@ -739,15 +752,28 @@ class _ChatPaneState extends State<_ChatPane> {
               color: Theme.of(context).brightness == Brightness.light
                   ? const Color(0xFFEDEDED)
                   : Theme.of(context).colorScheme.surfaceContainerLow,
-              child: controller.messages.isEmpty
-                  ? Center(
-                      child: Text(
-                        peer.trusted
-                            ? controller.text.sayOrDropFile
-                            : controller.text.pairFirst,
-                      ),
-                    )
-                  : _messageList(),
+              child: Column(
+                children: [
+                  if (pairRequest != null)
+                    _PairRequestCard(
+                      controller: controller,
+                      request: pairRequest,
+                    ),
+                  if (pairingResult != null)
+                    _PairingResultLine(message: pairingResult),
+                  Expanded(
+                    child: controller.messages.isEmpty
+                        ? Center(
+                            child: Text(
+                              peer.trusted
+                                  ? controller.text.sayOrDropFile
+                                  : controller.text.pairFirst,
+                            ),
+                          )
+                        : _messageList(),
+                  ),
+                ],
+              ),
             ),
           ),
           if (!_atBottom && controller.messages.isNotEmpty)
@@ -888,6 +914,182 @@ class _NewMessageButton extends StatelessWidget {
   }
 }
 
+class _PairRequestCard extends StatelessWidget {
+  const _PairRequestCard({required this.controller, required this.request});
+
+  final AppController controller;
+  final PendingPairRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final busy = controller.isOperationActive('pairRequest:${request.id}');
+    final endpoint = request.host.isEmpty || request.port <= 0
+        ? controller.text.notConnected
+        : displayHost(request.host, request.port);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            elevation: 0,
+            color: scheme.surfaceContainerHigh,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.lock_outline, color: scheme.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          controller.text.securePairRequest,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      _DeviceAvatar(
+                        name: request.displayName,
+                        platform: request.platform,
+                        avatarSeed: request.avatarSeed,
+                        avatarColor: request.avatarColor,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              request.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              '${request.platform} · $endpoint',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(controller.text.firstConnectionConfirmCode),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _formatPairCode(request.code),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 4,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${controller.text.fingerprint}: ${shortFingerprint(request.fingerprint)}',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: busy
+                              ? null
+                              : () => controller.approvePairRequest(request.id),
+                          child: Text(controller.text.allow),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton(
+                        onPressed: busy
+                            ? null
+                            : () => controller.rejectPairRequest(request.id),
+                        child: Text(controller.text.reject),
+                      ),
+                    ],
+                  ),
+                  if (busy) ...[
+                    const SizedBox(height: 10),
+                    const LinearProgressIndicator(minHeight: 2),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatPairCode(String code) {
+    final compact = code.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length == 6) {
+      return '${compact.substring(0, 3)} ${compact.substring(3)}';
+    }
+    return code;
+  }
+}
+
+class _PairingResultLine extends StatelessWidget {
+  const _PairingResultLine({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.verified_user_outlined, size: 16, color: scheme.outline),
+            const SizedBox(width: 6),
+            Text(
+              message,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.outline),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SearchBar extends StatelessWidget {
   const _SearchBar({
     required this.controller,
@@ -1012,6 +1214,8 @@ class _DesktopPeerHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasPairRequest =
+        controller.pendingPairRequestForDevice(peer.id) != null;
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1058,7 +1262,12 @@ class _DesktopPeerHeader extends StatelessWidget {
               onPressed: () => _confirmDeleteConversation(context, controller),
               icon: const Icon(Icons.delete_outline),
             ),
-          if (!peer.trusted)
+          if (!peer.trusted && hasPairRequest)
+            Chip(
+              avatar: const Icon(Icons.lock_outline, size: 18),
+              label: Text(controller.text.pairRequestPending),
+            ),
+          if (!peer.trusted && !hasPairRequest)
             FilledButton.icon(
               onPressed: controller.busy ? null : () => controller.pair(peer),
               icon: const Icon(Icons.handshake),
@@ -1252,6 +1461,17 @@ Future<void> _showSettingsDialog(
                   );
                 },
               ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.network_check_outlined),
+                title: Text(controller.text.campusNetworkDiagnostic),
+                subtitle: Text(controller.text.campusNetworkDiagnosticSubtitle),
+                trailing: TextButton(
+                  onPressed: () =>
+                      _showNetworkDiagnosticDialog(context, controller),
+                  child: Text(controller.text.runNetworkDiagnostic),
+                ),
+              ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(controller.text.autoCopyReceivedText),
@@ -1259,6 +1479,33 @@ Future<void> _showSettingsDialog(
                 value: controller.autoCopyReceivedText,
                 onChanged: controller.setAutoCopyReceivedText,
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.notifications_active_outlined),
+                title: Text(controller.text.systemNotifications),
+                subtitle: Text(controller.text.systemNotificationsSubtitle),
+                value: controller.notificationsEnabled,
+                onChanged: controller.setNotificationsEnabled,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.visibility_outlined),
+                title: Text(controller.text.notificationPreview),
+                subtitle: Text(controller.text.notificationPreviewSubtitle),
+                value: controller.notificationPreviewEnabled,
+                onChanged: controller.notificationsEnabled
+                    ? controller.setNotificationPreviewEnabled
+                    : null,
+              ),
+              if (controller.keepAliveSupported)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.phonelink_lock_outlined),
+                  title: Text(controller.text.keepAliveConnection),
+                  subtitle: Text(controller.text.keepAliveConnectionSubtitle),
+                  value: controller.keepAliveEnabled,
+                  onChanged: controller.setKeepAliveEnabled,
+                ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(controller.text.language),
@@ -1390,54 +1637,275 @@ Future<void> _showAddPeerDialog(
 ) async {
   var host = '';
   var port = '40123';
+  NetworkDiagnosticResult? diagnostic;
+  var diagnosing = false;
   await showDialog<void>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setState) => AlertDialog(
-        title: Text(controller.text.addPeerManually),
-        content: SizedBox(
-          width: 360,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                decoration: InputDecoration(
-                  labelText: controller.text.peerHost,
-                  hintText: '192.168.10.5',
+      builder: (dialogContext, setState) {
+        Future<void> runDiagnostic() async {
+          final portValue = int.tryParse(port);
+          if (host.isEmpty || portValue == null || portValue <= 0) {
+            setState(() {
+              diagnostic = NetworkDiagnosticResult(
+                host: host,
+                port: portValue ?? 0,
+                status: NetworkDiagnosticStatus.invalidInput,
+              );
+            });
+            return;
+          }
+          setState(() => diagnosing = true);
+          final result = await controller.checkManualPeerConnectivity(
+            host,
+            portValue,
+          );
+          if (!dialogContext.mounted) return;
+          setState(() {
+            diagnostic = result;
+            diagnosing = false;
+          });
+        }
+
+        return AlertDialog(
+          title: Text(controller.text.addPeerManually),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: controller.text.peerHost,
+                    hintText: '192.168.10.5',
+                  ),
+                  onChanged: (value) => host = value.trim(),
                 ),
-                onChanged: (value) => host = value.trim(),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                decoration: InputDecoration(
-                  labelText: controller.text.peerPort,
+                const SizedBox(height: 12),
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: controller.text.peerPort,
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) => port = value.trim(),
                 ),
-                keyboardType: TextInputType.number,
-                onChanged: (value) => port = value.trim(),
-              ),
-            ],
+                if (diagnostic != null) ...[
+                  const SizedBox(height: 12),
+                  _NetworkDiagnosticResultCard(
+                    controller: controller,
+                    result: diagnostic!,
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(controller.text.cancel),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final portValue = int.tryParse(port);
-              if (host.isEmpty || portValue == null || portValue <= 0) {
-                return;
-              }
-              Navigator.of(dialogContext).pop();
-              await controller.addPeerManually(host, portValue);
-            },
-            child: Text(controller.text.add),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: diagnosing
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(),
+              child: Text(controller.text.cancel),
+            ),
+            OutlinedButton.icon(
+              onPressed: diagnosing ? null : runDiagnostic,
+              icon: diagnosing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.network_check),
+              label: Text(controller.text.testBeforeAddPeer),
+            ),
+            FilledButton(
+              onPressed: diagnosing
+                  ? null
+                  : () async {
+                      final portValue = int.tryParse(port);
+                      if (host.isEmpty || portValue == null || portValue <= 0) {
+                        return;
+                      }
+                      Navigator.of(dialogContext).pop();
+                      await controller.addPeerManually(host, portValue);
+                    },
+              child: Text(controller.text.add),
+            ),
+          ],
+        );
+      },
     ),
   );
+}
+
+Future<void> _showNetworkDiagnosticDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  var host = '';
+  var port = '40123';
+  NetworkDiagnosticResult? diagnostic;
+  var diagnosing = false;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) {
+        Future<void> runDiagnostic() async {
+          final portValue = int.tryParse(port);
+          if (host.isEmpty || portValue == null || portValue <= 0) {
+            setState(() {
+              diagnostic = NetworkDiagnosticResult(
+                host: host,
+                port: portValue ?? 0,
+                status: NetworkDiagnosticStatus.invalidInput,
+              );
+            });
+            return;
+          }
+          setState(() => diagnosing = true);
+          final result = await controller.checkManualPeerConnectivity(
+            host,
+            portValue,
+          );
+          if (!dialogContext.mounted) return;
+          setState(() {
+            diagnostic = result;
+            diagnosing = false;
+          });
+        }
+
+        return AlertDialog(
+          title: Text(controller.text.campusNetworkDiagnostic),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: controller.text.peerHost,
+                    hintText: '172.30.72.176',
+                  ),
+                  onChanged: (value) => host = value.trim(),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: controller.text.peerPort,
+                    helperText: controller.text.networkDiagnosticPortHelper,
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) => port = value.trim(),
+                ),
+                if (diagnostic != null) ...[
+                  const SizedBox(height: 12),
+                  _NetworkDiagnosticResultCard(
+                    controller: controller,
+                    result: diagnostic!,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: diagnosing
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(),
+              child: Text(controller.text.close),
+            ),
+            FilledButton.icon(
+              onPressed: diagnosing ? null : runDiagnostic,
+              icon: diagnosing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.network_check),
+              label: Text(controller.text.runNetworkDiagnostic),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class _NetworkDiagnosticResultCard extends StatelessWidget {
+  const _NetworkDiagnosticResultCard({
+    required this.controller,
+    required this.result,
+  });
+
+  final AppController controller;
+  final NetworkDiagnosticResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final success = result.reachable;
+    final color = success ? scheme.primary : scheme.error;
+    final localEndpoints = result.localEndpoints;
+    return Card(
+      margin: EdgeInsets.zero,
+      color: success ? scheme.primaryContainer : scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  success ? Icons.check_circle_outline : Icons.error_outline,
+                  color: color,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SelectableText(
+                    controller.text.networkDiagnosticSummary(result),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: success
+                          ? scheme.onPrimaryContainer
+                          : scheme.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              controller.text.networkDiagnosticAdvice,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 4),
+            SelectableText(controller.text.networkDiagnosticAdviceFor(result)),
+            const SizedBox(height: 8),
+            Text(
+              controller.text.networkDiagnosticLocalAddress,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              localEndpoints.isEmpty
+                  ? controller.text.networkDiagnosticNoLocalAddress
+                  : localEndpoints.join('\n'),
+            ),
+            if (result.errorDetail != null &&
+                result.errorDetail!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SelectableText(
+                'detail: ${result.errorDetail}',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 Future<void> _showLocalRenameDialog(
@@ -1472,76 +1940,6 @@ Future<void> _showLocalRenameDialog(
   );
   if (value != null) {
     await controller.renameLocalDevice(value);
-  }
-}
-
-Future<void> _showPairRequestDialog(
-  BuildContext context,
-  AppController controller,
-  PendingPairRequest request,
-) async {
-  final endpoint = request.host.isEmpty || request.port <= 0
-      ? controller.text.notConnected
-      : displayHost(request.host, request.port);
-  final allowed = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      title: Text(controller.text.allowPairTitle),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _DeviceAvatar(
-                name: request.displayName,
-                platform: request.platform,
-                avatarSeed: request.avatarSeed,
-                avatarColor: request.avatarColor,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      request.displayName,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text('${request.platform} · $endpoint'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '${controller.text.verificationCode}: ${request.code}',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '${controller.text.fingerprint}: ${shortFingerprint(request.fingerprint)}',
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: Text(controller.text.reject),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          child: Text(controller.text.allow),
-        ),
-      ],
-    ),
-  );
-  if (allowed == true) {
-    await controller.approvePendingPair();
-  } else {
-    await controller.rejectPendingPair();
   }
 }
 

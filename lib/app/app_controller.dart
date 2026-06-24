@@ -11,15 +11,19 @@ import '../core/app_text.dart';
 import '../core/app_failure.dart';
 import '../core/formatters.dart';
 import '../data/app_database.dart';
+import '../models/network_diagnostic.dart';
+import '../models/notification_event.dart';
 import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
 import '../models/transfer_views.dart';
 import '../models/chat_page.dart';
 import 'settings_controller.dart';
+import '../services/android_keep_alive_service.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
 import '../services/identity_service.dart';
+import '../services/notification_service.dart';
 import '../services/secure_key_store.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
@@ -34,10 +38,14 @@ class AppController extends ChangeNotifier {
     FileStore? fileStore,
     ClipboardImportService? clipboardImportService,
     SecureKeyStore? secureKeyStore,
+    NotificationService? notificationService,
+    AndroidKeepAliveService? keepAliveService,
   }) : db = database ?? AppDatabase(),
        fileStore = fileStore ?? FileStore(),
        clipboardImportService =
-           clipboardImportService ?? ClipboardImportService() {
+           clipboardImportService ?? ClipboardImportService(),
+       notificationService = notificationService ?? NotificationService(),
+       keepAliveService = keepAliveService ?? const AndroidKeepAliveService() {
     // 生产环境由 main() 传入真实 SecureKeyStore；测试默认不传（回退数据库明文），
     // 避免依赖平台安全存储插件。
     identityService = IdentityService(db, secureKeyStore: secureKeyStore);
@@ -55,6 +63,8 @@ class AppController extends ChangeNotifier {
   final AppDatabase db;
   final FileStore fileStore;
   final ClipboardImportService clipboardImportService;
+  final NotificationService notificationService;
+  final AndroidKeepAliveService keepAliveService;
   final WindowService windowService = const WindowService();
   late final IdentityService identityService;
   late final SecurityService securityService;
@@ -86,6 +96,27 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  PendingPairRequest? get pendingPairRequest =>
+      pendingPairRequests.isEmpty ? null : pendingPairRequests.last;
+
+  PendingPairRequest? pendingPairRequestForDevice(String deviceId) {
+    for (final request in pendingPairRequests.reversed) {
+      if (request.deviceId == deviceId) return request;
+    }
+    return null;
+  }
+
+  String? pairingResultForDevice(String deviceId) =>
+      pairingResultMessagesByDevice[deviceId];
+
+  void setAppForeground(bool value) {
+    final changed = _appForeground != value;
+    _appForeground = value;
+    if (changed && value && selectedDevice != null) {
+      _scheduleRefresh();
+    }
+  }
+
   /// 当前会话分页游标（用于判断是否还有更早的页 + 向前加载）。
   ChatPageCursor? messageCursor;
 
@@ -93,7 +124,8 @@ class AppController extends ChangeNotifier {
   bool hasMoreMessages = false;
   Device? selectedDevice;
   Conversation? selectedConversation;
-  PendingPairRequest? pendingPairRequest;
+  final List<PendingPairRequest> pendingPairRequests = [];
+  final Map<String, String> pairingResultMessagesByDevice = {};
   bool initialized = false;
   bool busy = false;
 
@@ -116,6 +148,7 @@ class AppController extends ChangeNotifier {
   String? lastError;
   String? notificationText;
   int notificationSerial = 0;
+  bool _appForeground = true;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
   PendingAttachmentBatch? pendingAttachmentBatch;
@@ -123,9 +156,12 @@ class AppController extends ChangeNotifier {
 
   StreamSubscription<void>? _transportSub;
   StreamSubscription<String>? _notificationSub;
+  StreamSubscription<AppNotificationEvent>? _notificationEventSub;
   StreamSubscription<DiscoveredPeer>? _discoverySub;
   StreamSubscription<PendingPairRequest>? _pairRequestSub;
+  StreamSubscription<String>? _notificationTapSub;
   StreamSubscription<List<SharedMediaFile>>? _sharingSub;
+  final Map<String, Timer> _pairRequestTimers = {};
   Timer? _presenceTimer;
   Timer? _refreshTimer;
   bool _refreshingPresence = false;
@@ -139,6 +175,10 @@ class AppController extends ChangeNotifier {
   bool get autoCopyReceivedText => settings.autoCopyReceivedText;
   bool get trayEnabled => settings.trayEnabled;
   bool get autostartEnabled => settings.autostartEnabled;
+  bool get notificationsEnabled => settings.notificationsEnabled;
+  bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
+  bool get keepAliveEnabled => settings.keepAliveEnabled;
+  bool get keepAliveSupported => keepAliveService.isSupported;
   String get languageCode => settings.languageCode;
   String get themeModeCode => settings.themeModeCode;
   set themeModeCode(String value) => settings.themeModeCode = value;
@@ -151,6 +191,16 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       await settings.load();
+      if (settings.keepAliveEnabled && keepAliveService.isSupported) {
+        await keepAliveService.start();
+      }
+      await notificationService.initialize();
+      if (settings.notificationsEnabled) {
+        await notificationService.requestPermissionIfNeeded();
+      }
+      _notificationTapSub = notificationService.notificationTapStream.listen(
+        (payload) => unawaited(handleNotificationPayload(payload)),
+      );
       transportService.autoCopyReceivedText = settings.autoCopyReceivedText;
       transportService.languageCode = settings.languageCode;
       transportService.reconnectPeer = _waitForReconnectedPeer;
@@ -165,13 +215,12 @@ class AppController extends ChangeNotifier {
         status = message;
         notifyListeners();
       });
+      _notificationEventSub = transportService.notificationEvents.listen(
+        (event) => unawaited(handleNotificationEvent(event)),
+      );
       _discoverySub = discoveryService.peers.listen((_) => _scheduleRefresh());
       _pairRequestSub = transportService.pairRequests.listen((request) {
-        pendingPairRequest = request;
-        status = languageCode == 'en'
-            ? '${request.displayName} requests pairing. Confirm code ${request.code}.'
-            : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
-        notifyListeners();
+        unawaited(_handleIncomingPairRequest(request));
       });
       _presenceTimer = Timer.periodic(
         const Duration(seconds: 5),
@@ -236,6 +285,10 @@ class AppController extends ChangeNotifier {
         transfersById = {
           for (final transfer in transfers) transfer.id: transfer,
         };
+        if (_appForeground) {
+          await markConversationRead(selectedDevice!.id);
+          conversations = await db.listConversations();
+        }
       }
       await _loadConversationSummaries();
     } finally {
@@ -447,6 +500,52 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setNotificationsEnabled(bool value) async {
+    await settings.setNotificationsEnabled(value);
+    if (value) {
+      await notificationService.requestPermissionIfNeeded();
+    }
+    status = value
+        ? (settings.languageCode == 'en'
+              ? 'System notifications enabled'
+              : '已开启系统消息通知')
+        : (settings.languageCode == 'en'
+              ? 'System notifications disabled'
+              : '已关闭系统消息通知');
+    notifyListeners();
+  }
+
+  Future<void> setNotificationPreviewEnabled(bool value) async {
+    await settings.setNotificationPreviewEnabled(value);
+    status = value
+        ? (settings.languageCode == 'en'
+              ? 'Notification content preview enabled'
+              : '已开启通知内容预览')
+        : (settings.languageCode == 'en'
+              ? 'Notification content preview disabled'
+              : '已关闭通知内容预览');
+    notifyListeners();
+  }
+
+  Future<void> setKeepAliveEnabled(bool value) async {
+    await settings.setKeepAliveEnabled(value);
+    if (keepAliveService.isSupported) {
+      if (value) {
+        await keepAliveService.start();
+      } else {
+        await keepAliveService.stop();
+      }
+    }
+    status = value
+        ? (settings.languageCode == 'en'
+              ? 'Background connection keep-alive enabled'
+              : '已开启后台保持连接')
+        : (settings.languageCode == 'en'
+              ? 'Background reliability will be reduced'
+              : '已关闭后台保持连接，后台可靠性会下降');
+    notifyListeners();
+  }
+
   Future<void> setTrayEnabled(bool value) async {
     await settings.setTrayEnabled(value);
     status = value
@@ -502,23 +601,124 @@ class AppController extends ChangeNotifier {
   Future<void> approvePendingPair() async {
     final request = pendingPairRequest;
     if (request == null) return;
-    transportService.approvePairRequest(request.id);
-    pendingPairRequest = null;
-    status = languageCode == 'en'
-        ? 'Allowed pairing with ${request.displayName}'
-        : '已允许 ${request.displayName} 配对';
-    await refresh();
+    await approvePairRequest(request.id);
   }
 
   Future<void> rejectPendingPair() async {
     final request = pendingPairRequest;
     if (request == null) return;
-    transportService.rejectPairRequest(request.id);
-    pendingPairRequest = null;
-    status = languageCode == 'en'
-        ? 'Rejected pairing with ${request.displayName}'
-        : '已拒绝 ${request.displayName} 配对';
+    await rejectPairRequest(request.id);
+  }
+
+  Future<void> approvePairRequest(String requestId) async {
+    final request = _pendingPairRequestById(requestId);
+    if (request == null) return;
+    final operationKey = 'pairRequest:$requestId';
+    _beginOperation(operationKey);
     notifyListeners();
+    try {
+      transportService.approvePairRequest(requestId);
+      _removePendingPairRequest(requestId);
+      pairingResultMessagesByDevice[request.deviceId] =
+          text.trustedChannelEstablished;
+      status = languageCode == 'en'
+          ? 'Allowed pairing with ${request.displayName}'
+          : '已允许 ${request.displayName} 配对';
+      await refresh();
+    } finally {
+      _endOperation(operationKey);
+      notifyListeners();
+    }
+  }
+
+  Future<void> rejectPairRequest(String requestId) async {
+    final request = _pendingPairRequestById(requestId);
+    if (request == null) return;
+    final operationKey = 'pairRequest:$requestId';
+    _beginOperation(operationKey);
+    notifyListeners();
+    try {
+      transportService.rejectPairRequest(requestId);
+      _removePendingPairRequest(requestId);
+      pairingResultMessagesByDevice[request.deviceId] =
+          text.pairRequestRejected;
+      status = languageCode == 'en'
+          ? 'Rejected pairing with ${request.displayName}'
+          : '已拒绝 ${request.displayName} 配对';
+    } finally {
+      _endOperation(operationKey);
+      notifyListeners();
+    }
+  }
+
+  Future<void> handleNotificationEvent(AppNotificationEvent event) async {
+    if (!settings.notificationsEnabled) return;
+    if (!await _shouldShowSystemNotification()) return;
+    await notificationService.showMessageNotification(
+      event,
+      includePreview: settings.notificationPreviewEnabled,
+    );
+  }
+
+  Future<void> handleNotificationPayload(String payload) async {
+    final parsed = AppNotificationPayload.tryParse(payload);
+    if (parsed == null) return;
+    await windowService.show();
+    final deviceId = parsed.deviceId;
+    if (deviceId == null) return;
+    final device = await db.getDevice(deviceId);
+    if (device == null) return;
+    await selectDevice(device);
+  }
+
+  Future<void> _handleIncomingPairRequest(PendingPairRequest request) async {
+    _removePendingPairRequest(request.id);
+    pendingPairRequests.add(request);
+    pairingResultMessagesByDevice.remove(request.deviceId);
+    _pairRequestTimers[request.id] = Timer(const Duration(seconds: 65), () {
+      final expired = _pendingPairRequestById(request.id);
+      if (expired == null) return;
+      _removePendingPairRequest(request.id);
+      pairingResultMessagesByDevice[request.deviceId] = text.pairRequestExpired;
+      status = text.pairRequestExpired;
+      notifyListeners();
+    });
+    status = languageCode == 'en'
+        ? '${request.displayName} requests pairing. Confirm code ${request.code}.'
+        : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
+    await refresh();
+    if (selectedDevice == null) {
+      final device = await db.getDevice(request.deviceId);
+      if (device != null) {
+        await selectDevice(device);
+      }
+    }
+    notifyListeners();
+    if (settings.notificationsEnabled &&
+        await _shouldShowSystemNotification()) {
+      await notificationService.showPairRequestNotification(
+        request,
+        title: text.securePairRequest,
+        body: text.pairRequestNotificationBody(request.displayName),
+      );
+    }
+  }
+
+  PendingPairRequest? _pendingPairRequestById(String requestId) {
+    for (final request in pendingPairRequests) {
+      if (request.id == requestId) return request;
+    }
+    return null;
+  }
+
+  void _removePendingPairRequest(String requestId) {
+    _pairRequestTimers.remove(requestId)?.cancel();
+    pendingPairRequests.removeWhere((request) => request.id == requestId);
+  }
+
+  Future<bool> _shouldShowSystemNotification() async {
+    final nativeForeground = await windowService.isForeground();
+    return !(nativeForeground ?? _appForeground);
   }
 
   Future<void> pair(Device device) async {
@@ -574,6 +774,49 @@ class AppController extends ChangeNotifier {
       return null;
     } finally {
       _endOperation('addPeer');
+      notifyListeners();
+    }
+  }
+
+  Future<NetworkDiagnosticResult> checkManualPeerConnectivity(
+    String host,
+    int port,
+  ) async {
+    final cleanHost = host.trim();
+    _beginOperation('diagnosePeer');
+    status = languageCode == 'en'
+        ? 'Testing $cleanHost:$port...'
+        : '正在测试 $cleanHost:$port...';
+    notifyListeners();
+    try {
+      final endpoints = await loadLocalNetworkEndpoints();
+      final result = (cleanHost.isEmpty || port <= 0 || port > 65535)
+          ? NetworkDiagnosticResult(
+              host: cleanHost,
+              port: port,
+              status: NetworkDiagnosticStatus.invalidInput,
+              localEndpoints: endpoints,
+            )
+          : (await transportService.probeHello(
+              cleanHost,
+              port,
+            )).withLocalEndpoints(endpoints);
+      lastError = result.reachable ? null : result.errorDetail;
+      status = text.networkDiagnosticSummary(result);
+      return result;
+    } catch (error) {
+      final result = NetworkDiagnosticResult(
+        host: cleanHost,
+        port: port,
+        status: NetworkDiagnosticStatus.unknownError,
+        errorDetail: '$error',
+        localEndpoints: await loadLocalNetworkEndpoints(),
+      );
+      lastError = result.errorDetail;
+      status = text.networkDiagnosticSummary(result);
+      return result;
+    } finally {
+      _endOperation('diagnosePeer');
       notifyListeners();
     }
   }
@@ -1249,13 +1492,21 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _transportSub?.cancel();
     _notificationSub?.cancel();
+    _notificationEventSub?.cancel();
     _discoverySub?.cancel();
     _pairRequestSub?.cancel();
+    _notificationTapSub?.cancel();
     _sharingSub?.cancel();
+    for (final timer in _pairRequestTimers.values) {
+      timer.cancel();
+    }
+    _pairRequestTimers.clear();
     _presenceTimer?.cancel();
     _refreshTimer?.cancel();
+    unawaited(keepAliveService.stop());
     discoveryService.stop();
     transportService.stop();
+    notificationService.dispose();
     db.close();
     super.dispose();
   }

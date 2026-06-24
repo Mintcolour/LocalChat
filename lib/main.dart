@@ -414,6 +414,11 @@ class _DeviceTile extends StatelessWidget {
               avatarColor: device.avatarColor,
               trusted: device.trusted,
             ),
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: _PeerStatusBadge(device: device, label: statusLabel),
+            ),
             if (unread > 0)
               Positioned(
                 right: -4,
@@ -440,18 +445,17 @@ class _DeviceTile extends StatelessWidget {
               ),
           ],
         ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                controller.titleFor(device),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+        title: Tooltip(
+          message: controller.titleFor(device),
+          child: Text(
+            controller.titleFor(device),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
             ),
-            const SizedBox(width: 6),
-            _PeerStatusBadge(device: device, label: statusLabel),
-          ],
+          ),
         ),
         subtitle: Text(
           preview.isEmpty ? '${device.platform} · $endpoint' : preview,
@@ -497,20 +501,32 @@ class _PeerStatusBadge extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final online = isPeerOnline(device);
     final icon = !device.trusted
-        ? Icons.link_off_outlined
+        ? Icons.link_off
         : online
-        ? Icons.check_circle
-        : Icons.cloud_off_outlined;
+        ? Icons.fiber_manual_record
+        : Icons.fiber_manual_record;
     final color = !device.trusted
         ? scheme.outline
         : online
-        ? scheme.primary
+        ? const Color(0xFF10B981) // Clean emerald green for online status
         : scheme.error;
     return Tooltip(
       message: label,
       child: Semantics(
         label: label,
-        child: Icon(icon, size: 16, color: color),
+        child: Container(
+          padding: const EdgeInsets.all(1.5),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.surface, width: 0.5),
+          ),
+          child: Icon(
+            icon,
+            size: 11,
+            color: color,
+          ),
+        ),
       ),
     );
   }

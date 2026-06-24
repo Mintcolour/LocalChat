@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalChat - 局域网直连，聊天式跨端快传</title>
+    <meta name="description" content="LocalChat 是一个 Flutter 局域网直连传输工具，用聊天窗口的方式在 Windows 和 Android 设备之间发送文字、链接、图片和文件（夹）。">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+    <!-- Custom JS -->
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <!-- Background Glows -->
+    <div class="glow-sphere glow-sphere-1"></div>
+    <div class="glow-sphere glow-sphere-2"></div>
+
+    <!-- Header Navigation -->
+    <header class="header">
+        <div class="container header-container">
+            <a href="#" class="logo">
+                <!-- SVG Custom Logo representing a Chat Bubble + Transfer Arrows -->
+                <svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="100" height="100" rx="24" fill="url(#logo-grad)" />
+                    <!-- Chat Bubble Outline -->
+                    <path d="M72 48C72 34.7452 61.9264 24 49.5 24C37.0736 24 27 34.7452 27 48C27 54.9123 29.897 61.1215 34.5447 65.4851C33.6826 69.4589 31.2588 74.4532 29.2155 76.8407C29.0006 77.0917 29.1384 77.4727 29.4593 77.525C34.4239 78.334 40.5484 76.5161 44.2709 74.3214C45.9611 74.7634 47.7056 75 49.5 75C61.9264 75 72 64.2548 72 48Z" fill="white" fill-opacity="0.15" stroke="white" stroke-width="4.5" stroke-linejoin="round"/>
+                    <!-- Transfer Arrows inside bubble -->
+                    <path d="M42 41L35 48M35 48L42 55M35 48H60" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M58 59L65 52M65 52L58 45M65 52H40" stroke="#1FA37A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs>
+                        <linearGradient id="logo-grad" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#141923" />
+                            <stop offset="1" stop-color="#1e293b" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <span class="logo-text">LocalChat</span>
+            </a>
+            <nav class="nav">
+                <a href="#features" class="nav-link">项目亮点</a>
+                <a href="#security" class="nav-link">安全设计</a>
+                <a href="#how-it-works" class="nav-link">工作原理</a>
+                <a href="#downloads" class="nav-btn">立即下载</a>
+            </nav>
+            <a href="https://github.com/Mintcolour/LocalChat" target="_blank" class="github-icon-link" aria-label="GitHub Repository">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.11.82-.26.82-.577v-2.234c-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.43.372.82 1.102.82 2.222v3.293c0 .319.22.694.825.576C20.565 21.795 24 17.3 24 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+            </a>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero-section">
+        <div class="container hero-container">
+            <div class="hero-content">
+                <div class="badge">局域网直连 · 跨端快传</div>
+                <h1 class="hero-title">局域网直连<br><span class="highlight">聊天式</span>极速快传</h1>
+                <p class="hero-description">
+                    LocalChat 是一款专为本地设备打造的 Flutter 局域网传输工具。无需注册登录，数据绝不经过第三方服务器，通过简单的聊天窗口，就能在 Windows 和 Android 设备之间极速发送文字、图片、文件夹。
+                </p>
+                <div class="hero-ctas">
+                    <a href="#downloads" class="btn-primary">立即免费获取</a>
+                    <a href="https://github.com/Mintcolour/LocalChat" target="_blank" class="btn-secondary">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.11.82-.26.82-.577v-2.234c-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.43.372.82 1.102.82 2.222v3.293c0 .319.22.694.825.576C20.565 21.795 24 17.3 24 12c0-6.63-5.37-12-12-12z"/>
+                        </svg>
+                        GitHub 仓库
+                    </a>
+                </div>
+            </div>
+
+            <!-- Interactive CSS/JS Chat Simulator Mockup -->
+            <div class="simulator-wrapper">
+                <div class="mockup-frame">
+                    <div class="mockup-header">
+                        <div class="mockup-window-controls">
+                            <span class="control-dot dot-close"></span>
+                            <span class="control-dot dot-minimize"></span>
+                            <span class="control-dot dot-maximize"></span>
+                        </div>
+                        <div class="mockup-title">
+                            <span class="status-indicator online"></span>
+                            <span id="simulator-peer-name">Galaxy S24 (Android)</span>
+                        </div>
+                        <div class="mockup-header-actions">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 5v14M5 12h14" stroke-linecap="round"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <!-- Conversation timeline scrollable area -->
+                    <div class="mockup-body" id="simulator-chat-body">
+                        <!-- Initial message -->
+                        <div class="chat-separator">局域网已连接</div>
+                        <!-- Messages will be dynamically rendered here via app.js -->
+                    </div>
+                    <div class="mockup-footer">
+                        <div class="mockup-input-bar">
+                            <div class="mockup-plus-btn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 5v14M5 12h14" stroke-linecap="round"/>
+                                </svg>
+                            </div>
+                            <div class="mockup-input" id="simulator-input-field">等待配对...</div>
+                            <div class="mockup-send-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Key Highlights / Features Section -->
+    <section class="features-section" id="features">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">为高效本地交互而生</h2>
+                <p class="section-subtitle">LocalChat 专为本地电脑与手机之间频繁的高密数据交换而设计</p>
+            </div>
+            <div class="features-grid">
+                <!-- Feature Card 1 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12h14M12 5l7 7-7 7" />
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">局域网直连极速</h3>
+                    <p class="feature-card-desc">设备间通过 UDP 广播快速发现，传输基于本地 HTTP 服务，无需中转，充分吃满本地网络带宽限制。</p>
+                </div>
+                <!-- Feature Card 2 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">聊天式交互界面</h3>
+                    <p class="feature-card-desc">文本、图片、文件、甚至是复杂的嵌套文件夹，全都落在一个聊天的会话时间线上。清晰追溯，容易回看。</p>
+                </div>
+                <!-- Feature Card 3 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">高等级安全性保障</h3>
+                    <p class="feature-card-desc">Ed25519 签名报文防冒充，X25519 协商会话共享密钥，AES-GCM 端到端分块加密，全过程本地完成。</p>
+                </div>
+                <!-- Feature Card 4 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">文件夹目录结构保留</h3>
+                    <p class="feature-card-desc">支持嵌套文件夹递归发送。接收端保留目录层级，传输时自动打包与分块并行，并提供独立传输中心统一管理。</p>
+                </div>
+                <!-- Feature Card 5 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <path d="M16 8h-6a2 2 0 0 0-2 2v6" />
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">系统原生集成</h3>
+                    <p class="feature-card-desc">Windows 端支持拖拽发送、剪贴板无缝粘贴发送、托盘静默；Android 支持全局系统分享菜单直接响应。</p>
+                </div>
+                <!-- Feature Card 6 -->
+                <div class="feature-card animate-card">
+                    <div class="feature-icon-wrapper">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                            <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
+                        </svg>
+                    </div>
+                    <h3 class="feature-card-title">本地持久化数据库</h3>
+                    <p class="feature-card-desc">基于 SQLite/Drift 高性能数据库，本地缓存所有聊天记录和文件发送位置，即使设备离线也可查看记录。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Security & Pairing Detail -->
+    <section class="security-section" id="security">
+        <div class="container security-container">
+            <div class="security-info">
+                <div class="badge">安全白皮书</div>
+                <h2 class="section-title">本地直连，无懈可击的安全策略</h2>
+                <p class="section-subtitle" style="text-align: left; margin: 1rem 0 2rem 0;">LocalChat 的安全方案设计在应用层，确保即是在公开的局域网（如公司 Wi-Fi 或星巴克 Wi-Fi）内传输也是安全的。</p>
+                
+                <ul class="security-list">
+                    <li>
+                        <div class="security-list-icon">1</div>
+                        <div>
+                            <h4>6位校验码可信配对</h4>
+                            <p>设备首次握手时，生成临时会话并提示 6 位一次性配对码。只有两端确认一致，才会交换并保存双方的身份公钥，防止中间人攻击。</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="security-list-icon">2</div>
+                        <div>
+                            <h4>Ed25519 每次签名验签</h4>
+                            <p>每个传输指令（如发送文本、文件初始化）都必须携带由本机安全存储私钥签名的 Header。对端使用已保存的信任公钥解密验签，彻底防御身份假冒。</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="security-list-icon">3</div>
+                        <div>
+                            <h4>X25519 + AES-256-GCM 传输加密</h4>
+                            <p>大文件和文本切片在发送前均使用一次性随机对称密钥进行 AES-GCM 加密，并由握手阶段的 X25519 共享密钥保护。网络中间节点仅能捕获加密碎片。</p>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="security-visual">
+                <div class="security-glass-card">
+                    <div class="lock-header">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#1FA37A" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        <h3>安全参数验证</h3>
+                    </div>
+                    <div class="crypto-details">
+                        <div class="crypto-row">
+                            <span class="label">密钥协商 (ECDH)</span>
+                            <span class="value code-font">X25519 (256-bit)</span>
+                        </div>
+                        <div class="crypto-row">
+                            <span class="label">签名算法 (Signature)</span>
+                            <span class="value code-font">Ed25519</span>
+                        </div>
+                        <div class="crypto-row">
+                            <span class="label">信道加密 (Encryption)</span>
+                            <span class="value code-font">AES-GCM-256</span>
+                        </div>
+                        <div class="crypto-row">
+                            <span class="label">数据库保护</span>
+                            <span class="value code-font">DPAPI / Keystore 密钥保护</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works / Steps -->
+    <section class="how-it-works-section" id="how-it-works">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">三步开启极速互传</h2>
+                <p class="section-subtitle">极简的操作逻辑，无任何多余步骤</p>
+            </div>
+            <div class="steps-flow">
+                <div class="step-card">
+                    <div class="step-number">01</div>
+                    <h3>打开应用</h3>
+                    <p>在你的 Windows 电脑 and Android 手机上分别下载并打开 LocalChat。设备将通过 UDP 在后台静默发现彼此。</p>
+                </div>
+                <div class="step-arrow">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="step-card">
+                    <div class="step-number">02</div>
+                    <h3>首次校验配对</h3>
+                    <p>在设备列表中点击对方设备发起配对，双端核对 6 位数字码并点击“同意”。往后该设备便是长期可信状态。</p>
+                </div>
+                <div class="step-arrow">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="step-card">
+                    <div class="step-number">03</div>
+                    <h3>像聊天一样发送</h3>
+                    <p>直接在聊天窗口内输入文字、拖入多个文件或文件夹。发送排队、断点传输在后台自动为您处理妥当。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Downloads Area -->
+    <section class="downloads-section" id="downloads">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">获取 LocalChat 客户端</h2>
+                <p class="section-subtitle">LocalChat 完全免费且开源，获取最新的 Release 包开始安装</p>
+            </div>
+            
+            <div class="download-cards">
+                <!-- Windows Card -->
+                <div class="download-card">
+                    <div class="platform-icon">
+                        <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+                            <path d="M0 3.449L9.75 2.1v9.45H0V3.449zM0 12.45h9.75v9.45L0 20.551v-8.101zM11.25 1.89l12.75-1.89v11.45H11.25V1.89zm12.75 10.56v11.45l-12.75-1.89v-9.56H24z"/>
+                        </svg>
+                    </div>
+                    <h3>Windows 客户端</h3>
+                    <p class="version">支持 Windows 10/11 x64/ARM</p>
+                    <p class="desc">包含系统托盘管理、开机自启、拖拽传输等完整的桌面特性。</p>
+                    <a href="https://github.com/Mintcolour/LocalChat/releases" target="_blank" class="download-button">从 GitHub Releases 下载 (.zip)</a>
+                </div>
+                
+                <!-- Android Card -->
+                <div class="download-card">
+                    <div class="platform-icon">
+                        <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+                            <path d="M17.523 15.3c-.352 0-.638-.286-.638-.637a.64.64 0 0 1 .638-.64c.35 0 .636.288.636.64a.639.639 0 0 1-.636.637m-11.046 0c-.351 0-.637-.286-.637-.637a.639.639 0 0 1 .637-.64c.35 0 .638.288.638.64a.64.64 0 0 1-.638.637m11.393-5.234l1.91-3.308a.423.423 0 0 0-.155-.578a.428.428 0 0 0-.58.156l-1.93 3.344C15.42 8.762 13.782 8.24 12 8.24c-1.78 0-3.418.522-5.116 1.432L4.954 6.328a.43.43 0 0 0-.58-.156a.422.422 0 0 0-.155.578l1.91 3.308C2.564 12.015.228 14.869.006 18.26h23.988c-.222-3.39-2.558-6.244-6.115-8.194"/>
+                        </svg>
+                    </div>
+                    <h3>Android 客户端</h3>
+                    <p class="version">支持 Android 8.0 及以上</p>
+                    <p class="desc">支持系统分享接入、大文件接收存储自动归档、系统级通知进度展示。</p>
+                    <a href="https://github.com/Mintcolour/LocalChat/releases" target="_blank" class="download-button">从 GitHub Releases 下载 (.apk)</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container footer-container">
+            <p>&copy; 2026 LocalChat Open Source Project. Under MIT License.</p>
+            <div class="footer-links">
+                <a href="https://github.com/Mintcolour/LocalChat" target="_blank">GitHub</a>
+                <a href="https://github.com/Mintcolour/LocalChat/issues" target="_blank">问题反馈</a>
+                <a href="https://github.com/Mintcolour/LocalChat/blob/main/LICENSE" target="_blank">开源许可证</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

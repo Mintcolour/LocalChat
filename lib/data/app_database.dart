@@ -573,7 +573,7 @@ class AppDatabase extends _$AppDatabase {
       ..where((tbl) => tbl.conversationId.equals(conversationId))
       ..where((tbl) => tbl.direction.equals('in'));
     if (lastReadAt != null) {
-      query.where((tbl) => tbl.createdAt.isBiggerOrEqualValue(lastReadAt));
+      query.where((tbl) => tbl.createdAt.isBiggerThanValue(lastReadAt));
     }
     final count = await query.get().then((rows) => rows.length);
     return count;

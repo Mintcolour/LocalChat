@@ -31,6 +31,14 @@ import '../services/window_service.dart';
 
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
+const _storageRootOperationKey = 'storageRoot';
+
+class StorageMigrationResult {
+  const StorageMigrationResult({required this.moved, required this.skipped});
+
+  final int moved;
+  final int skipped;
+}
 
 class AppController extends ChangeNotifier {
   AppController({
@@ -179,11 +187,16 @@ class AppController extends ChangeNotifier {
   bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
   bool get keepAliveEnabled => settings.keepAliveEnabled;
   bool get keepAliveSupported => keepAliveService.isSupported;
+  bool get storageRootOperationInProgress =>
+      isOperationActive(_storageRootOperationKey);
+  bool get hasCustomStorageRootPath => settings.storageRootPath != null;
   String get languageCode => settings.languageCode;
   String get themeModeCode => settings.themeModeCode;
   set themeModeCode(String value) => settings.themeModeCode = value;
   set languageCode(String value) => settings.languageCode = value;
   int get localListenPort => transportService.port;
+  String storageRootPath = '';
+  String defaultStorageRootPath = '';
 
   Future<void> initialize() async {
     busy = true;
@@ -191,6 +204,7 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       await settings.load();
+      await _syncStorageRootFromSettings();
       if (settings.keepAliveEnabled && keepAliveService.isSupported) {
         await keepAliveService.start();
       }
@@ -239,6 +253,18 @@ class AppController extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _syncStorageRootFromSettings() async {
+    if (!Platform.isWindows) {
+      fileStore.setStorageRootPath(null);
+      defaultStorageRootPath = '';
+      storageRootPath = '';
+      return;
+    }
+    fileStore.setStorageRootPath(settings.storageRootPath);
+    defaultStorageRootPath = await fileStore.defaultStorageRootPath();
+    storageRootPath = await fileStore.currentStorageRootPath();
   }
 
   Future<void> refresh() async {
@@ -586,6 +612,212 @@ class AppController extends ChangeNotifier {
               ? 'Background reliability will be reduced'
               : '已关闭后台保持连接，后台可靠性会下降');
     notifyListeners();
+  }
+
+  Future<void> setStorageRootPath(
+    String path, {
+    required bool migrateIndexedFiles,
+  }) {
+    return _changeStorageRootPath(
+      path,
+      migrateIndexedFiles: migrateIndexedFiles,
+      resetToDefault: false,
+    );
+  }
+
+  Future<void> resetStorageRootPath({required bool migrateIndexedFiles}) async {
+    if (!Platform.isWindows) {
+      status = text.storageRootUnsupported;
+      notifyListeners();
+      return;
+    }
+    final defaultPath = await fileStore.defaultStorageRootPath();
+    await _changeStorageRootPath(
+      defaultPath,
+      migrateIndexedFiles: migrateIndexedFiles,
+      resetToDefault: true,
+    );
+  }
+
+  Future<void> _changeStorageRootPath(
+    String requestedPath, {
+    required bool migrateIndexedFiles,
+    required bool resetToDefault,
+  }) async {
+    if (!Platform.isWindows) {
+      status = text.storageRootUnsupported;
+      notifyListeners();
+      return;
+    }
+    if (storageRootOperationInProgress) return;
+    _beginOperation(_storageRootOperationKey);
+    lastError = null;
+    status = text.storageRootChanging;
+    notifyListeners();
+    try {
+      final oldRoot = await fileStore.currentStorageRootPath();
+      final targetDir = await fileStore.prepareStorageRootDirectory(
+        requestedPath,
+      );
+      final newRoot = p.normalize(targetDir.path);
+      final sameRoot = FileStore.isSamePath(oldRoot, newRoot);
+      if (migrateIndexedFiles &&
+          !sameRoot &&
+          FileStore.pathsOverlap(oldRoot, newRoot)) {
+        throw const FormatException('storage_roots_overlap');
+      }
+
+      if (resetToDefault) {
+        await settings.resetStorageRootPath();
+      } else if (!sameRoot) {
+        await settings.setStorageRootPath(newRoot);
+      } else {
+        status = text.storageRootAlreadyCurrent;
+        return;
+      }
+      await _syncStorageRootFromSettings();
+
+      StorageMigrationResult? result;
+      if (migrateIndexedFiles && !sameRoot) {
+        result = await _migrateIndexedStorageFiles(
+          oldRoot: oldRoot,
+          newRoot: storageRootPath,
+        );
+      }
+
+      status = result == null
+          ? text.storageRootUpdated(storageRootPath)
+          : text.storageRootMigrated(
+              storageRootPath,
+              result.moved,
+              result.skipped,
+            );
+      await refresh();
+    } catch (error) {
+      lastError = '$error';
+      status = text.storageRootChangeFailed;
+    } finally {
+      _endOperation(_storageRootOperationKey);
+      notifyListeners();
+    }
+  }
+
+  Future<StorageMigrationResult> _migrateIndexedStorageFiles({
+    required String oldRoot,
+    required String newRoot,
+  }) async {
+    final transfers = await db.listReceivedTransfersForStorageMigration();
+    var movedCount = 0;
+    var skippedCount = 0;
+
+    for (final transfer in transfers) {
+      final sourcePath = transfer.savedPath ?? transfer.filePath;
+      if (sourcePath == null || sourcePath.isEmpty) continue;
+      if (!FileStore.isSameOrWithin(oldRoot, sourcePath)) continue;
+
+      final sourceType = await FileSystemEntity.type(
+        sourcePath,
+        followLinks: true,
+      );
+      if (sourceType != FileSystemEntityType.file) {
+        skippedCount++;
+        continue;
+      }
+
+      final relativePath = p.relative(sourcePath, from: oldRoot);
+      if (p.isAbsolute(relativePath) || relativePath.startsWith('..')) {
+        skippedCount++;
+        continue;
+      }
+
+      final targetDir = Directory(
+        p.normalize(p.join(newRoot, p.dirname(relativePath))),
+      );
+      try {
+        await targetDir.create(recursive: true);
+      } catch (_) {
+        skippedCount++;
+        continue;
+      }
+
+      final target = await fileStore.uniqueFileInDirectory(
+        targetDir,
+        p.basename(sourcePath),
+      );
+      final moved = await _moveStorageFile(File(sourcePath), target);
+      if (moved == null) {
+        skippedCount++;
+        continue;
+      }
+
+      final actualName = p.basename(moved.path);
+      final migratedRelativePath = transfer.relativePath == null
+          ? null
+          : FileStore.replaceRelativeFileName(
+              transfer.relativePath!,
+              actualName,
+            );
+      try {
+        await db.renameReceivedTransfer(
+          transferId: transfer.id,
+          fileName: actualName,
+          mimeType: transfer.mimeType,
+          savedPath: moved.path,
+          savedUri: null,
+          relativePath: migratedRelativePath,
+        );
+        movedCount++;
+      } catch (_) {
+        await _rollbackMovedStorageFile(moved.path, sourcePath);
+        skippedCount++;
+      }
+    }
+
+    await fileStore.deleteEmptyDirectoriesUnder(oldRoot);
+    return StorageMigrationResult(moved: movedCount, skipped: skippedCount);
+  }
+
+  Future<File?> _moveStorageFile(File source, File target) async {
+    try {
+      return await source.rename(target.path);
+    } on FileSystemException {
+      try {
+        final copied = await source.copy(target.path);
+        try {
+          await source.delete();
+        } catch (_) {
+          try {
+            if (await copied.exists()) await copied.delete();
+          } catch (_) {}
+          return null;
+        }
+        return copied;
+      } catch (_) {
+        try {
+          if (await target.exists()) await target.delete();
+        } catch (_) {}
+        return null;
+      }
+    }
+  }
+
+  Future<void> _rollbackMovedStorageFile(
+    String movedPath,
+    String originalPath,
+  ) async {
+    final moved = File(movedPath);
+    if (!await moved.exists() || await File(originalPath).exists()) return;
+    try {
+      await File(originalPath).parent.create(recursive: true);
+      try {
+        await moved.rename(originalPath);
+      } on FileSystemException {
+        await moved.copy(originalPath);
+        await moved.delete();
+      }
+    } catch (_) {
+      // Best effort: if rollback fails, the next refresh will still show status.
+    }
   }
 
   Future<void> setTrayEnabled(bool value) async {

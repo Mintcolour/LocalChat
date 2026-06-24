@@ -633,6 +633,18 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> clearTransferIndex() => delete(transfers).go();
 
+  Future<List<Transfer>> listReceivedTransfersForStorageMigration() {
+    return (select(transfers)
+          ..where(
+            (tbl) =>
+                tbl.direction.equals('in') &
+                tbl.savedUri.isNull() &
+                (tbl.savedPath.isNotNull() | tbl.filePath.isNotNull()),
+          )
+          ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)]))
+        .get();
+  }
+
   Future<void> markTransferSaved({
     required String transferId,
     String? savedPath,

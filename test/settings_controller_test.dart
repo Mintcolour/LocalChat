@@ -48,6 +48,7 @@ void main() {
     await settings.setNotificationsEnabled(false);
     await settings.setNotificationPreviewEnabled(true);
     await settings.setKeepAliveEnabled(true);
+    await settings.setStorageRootPath(r'C:\LocalChatStore');
 
     expect(settings.languageCode, 'en');
     expect(settings.themeModeCode, 'dark');
@@ -55,6 +56,7 @@ void main() {
     expect(settings.notificationsEnabled, isFalse);
     expect(settings.notificationPreviewEnabled, isTrue);
     expect(settings.keepAliveEnabled, isTrue);
+    expect(settings.storageRootPath, r'C:\LocalChatStore');
 
     // 重新载入应从数据库恢复。
     final reloaded = SettingsController(
@@ -68,6 +70,11 @@ void main() {
     expect(reloaded.notificationsEnabled, isFalse);
     expect(reloaded.notificationPreviewEnabled, isTrue);
     expect(reloaded.keepAliveEnabled, isTrue);
+    expect(reloaded.storageRootPath, r'C:\LocalChatStore');
+
+    await reloaded.resetStorageRootPath();
+    expect(reloaded.storageRootPath, isNull);
+    expect(await db.getSetting('storage_root_path'), '');
   });
 
   test('AppController delegates settings getters and setters', () async {

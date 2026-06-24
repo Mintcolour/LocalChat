@@ -149,6 +149,34 @@ class AppText {
   String get startOnBootSubtitle => en
       ? 'Launch LocalChat automatically when Windows starts'
       : 'Windows 启动时自动运行 LocalChat';
+  String get storageRootPath => en ? 'Default storage path' : '默认存储路径';
+  String storageRootPathSubtitle(String path) =>
+      en ? 'Received files are saved to:\n$path' : '收到的文件会保存到：\n$path';
+  String get chooseStorageRoot => en ? 'Choose storage folder' : '选择存储文件夹';
+  String get resetStorageRoot => en ? 'Use default path' : '恢复默认路径';
+  String get storageRootChanging =>
+      en ? 'Updating storage path...' : '正在更新存储路径...';
+  String get storageRootUnsupported => en
+      ? 'Custom storage path is currently available on Windows only'
+      : '自定义存储路径目前仅支持 Windows';
+  String get storageRootAlreadyCurrent =>
+      en ? 'This storage path is already in use' : '当前已经使用这个存储路径';
+  String get storageRootChangeFailed => en
+      ? 'Storage path update failed. Check folder permissions.'
+      : '存储路径更新失败，请检查目录权限';
+  String storageRootUpdated(String path) =>
+      en ? 'Storage path updated to $path' : '默认存储路径已更新为 $path';
+  String storageRootMigrated(String path, int moved, int skipped) => en
+      ? 'Storage path updated to $path. Moved $moved file(s), skipped $skipped.'
+      : '默认存储路径已更新为 $path。已移动 $moved 个文件，跳过 $skipped 个。';
+  String get changeStorageRootTitle =>
+      en ? 'Change storage path?' : '更改默认存储路径？';
+  String changeStorageRootBody(String path) => en
+      ? 'Future received files will be saved to:\n$path\n\nExisting files remain accessible from the old path unless you migrate them.'
+      : '之后收到的文件会保存到：\n$path\n\n不迁移时，旧文件仍从原路径打开；选择迁移会移动已索引的接收文件。';
+  String get changeStorageRootOnly => en ? 'Only future files' : '仅更改后续保存位置';
+  String get changeStorageRootAndMigrate =>
+      en ? 'Move indexed files too' : '同时迁移已保存文件';
   String get addPeerManually => en ? 'Add remote peer' : '添加跨网段好友';
   String get addPeerManuallySubtitle => en
       ? 'Connect to a peer on another subnet by IP and port'

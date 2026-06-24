@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1499,6 +1500,43 @@ Future<void> _showSettingsDialog(
                   );
                 },
               ),
+              if (Platform.isWindows)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.folder_open_outlined),
+                  title: Text(controller.text.storageRootPath),
+                  subtitle: SelectableText(
+                    controller.text.storageRootPathSubtitle(
+                      controller.storageRootPath,
+                    ),
+                  ),
+                  trailing: Wrap(
+                    spacing: 4,
+                    children: [
+                      IconButton(
+                        tooltip: controller.text.chooseStorageRoot,
+                        onPressed: controller.storageRootOperationInProgress
+                            ? null
+                            : () => _chooseStorageRoot(context, controller),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      IconButton(
+                        tooltip: controller.text.resetStorageRoot,
+                        onPressed:
+                            controller.storageRootOperationInProgress ||
+                                !controller.hasCustomStorageRootPath
+                            ? null
+                            : () => _confirmStorageRootChange(
+                                context,
+                                controller,
+                                controller.defaultStorageRootPath,
+                                resetToDefault: true,
+                              ),
+                        icon: const Icon(Icons.restart_alt_outlined),
+                      ),
+                    ],
+                  ),
+                ),
 
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1657,6 +1695,60 @@ Future<void> _showSettingsDialog(
       ),
     ),
   );
+}
+
+enum _StorageRootChangeAction { updateOnly, migrate }
+
+Future<void> _chooseStorageRoot(
+  BuildContext context,
+  AppController controller,
+) async {
+  final path = await FilePicker.platform.getDirectoryPath(
+    dialogTitle: controller.text.chooseStorageRoot,
+    initialDirectory: controller.storageRootPath.isEmpty
+        ? null
+        : controller.storageRootPath,
+  );
+  if (path == null || path.isEmpty || !context.mounted) return;
+  await _confirmStorageRootChange(context, controller, path);
+}
+
+Future<void> _confirmStorageRootChange(
+  BuildContext context,
+  AppController controller,
+  String path, {
+  bool resetToDefault = false,
+}) async {
+  final action = await showDialog<_StorageRootChangeAction>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(controller.text.changeStorageRootTitle),
+      content: SelectableText(controller.text.changeStorageRootBody(path)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(controller.text.cancel),
+        ),
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_StorageRootChangeAction.updateOnly),
+          child: Text(controller.text.changeStorageRootOnly),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_StorageRootChangeAction.migrate),
+          child: Text(controller.text.changeStorageRootAndMigrate),
+        ),
+      ],
+    ),
+  );
+  if (action == null || !context.mounted) return;
+  final migrate = action == _StorageRootChangeAction.migrate;
+  if (resetToDefault) {
+    await controller.resetStorageRootPath(migrateIndexedFiles: migrate);
+  } else {
+    await controller.setStorageRootPath(path, migrateIndexedFiles: migrate);
+  }
 }
 
 Future<void> _showAddPeerDialog(

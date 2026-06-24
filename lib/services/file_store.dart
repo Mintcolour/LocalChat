@@ -32,6 +32,40 @@ class RenamedFile extends SavedFile {
 class FileStore {
   static const _downloadsChannel = MethodChannel('localchat/downloads');
 
+  String? _storageRootPath;
+
+  void setStorageRootPath(String? path) {
+    final cleanPath = path?.trim();
+    _storageRootPath = cleanPath == null || cleanPath.isEmpty
+        ? null
+        : p.normalize(cleanPath);
+  }
+
+  String? get configuredStorageRootPath => _storageRootPath;
+
+  static bool isSamePath(String first, String second) {
+    return _normalizeForComparison(first) == _normalizeForComparison(second);
+  }
+
+  static bool isSameOrWithin(String root, String path) {
+    final cleanRoot = p.normalize(root);
+    final cleanPath = p.normalize(path);
+    final comparableRoot = _normalizeForComparison(cleanRoot);
+    final comparablePath = _normalizeForComparison(cleanPath);
+    return comparablePath == comparableRoot ||
+        p.isWithin(comparableRoot, comparablePath);
+  }
+
+  static bool pathsOverlap(String firstRoot, String secondRoot) {
+    return isSameOrWithin(firstRoot, secondRoot) ||
+        isSameOrWithin(secondRoot, firstRoot);
+  }
+
+  static String _normalizeForComparison(String path) {
+    final normalized = p.normalize(path);
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
   static String conversationFolder(String displayName, String deviceId) {
     final cleaned = displayName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
     if (cleaned.isEmpty) {
@@ -103,6 +137,46 @@ class FileStore {
     final base = await getTemporaryDirectory();
     final dir = Directory(p.join(base.path, 'LocalChat', 'incoming'));
     await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<String> currentStorageRootPath() async {
+    if (Platform.isWindows && _storageRootPath != null) {
+      return _storageRootPath!;
+    }
+    return (await _defaultDownloadsDirectory()).path;
+  }
+
+  Future<String> defaultStorageRootPath() async {
+    return (await _defaultDownloadsDirectory()).path;
+  }
+
+  Future<Directory> prepareStorageRootDirectory(String path) async {
+    final cleanPath = p.normalize(path.trim());
+    if (!Platform.isWindows) {
+      throw UnsupportedError('custom_storage_root_unsupported');
+    }
+    if (cleanPath.isEmpty || !p.isAbsolute(cleanPath)) {
+      throw const FormatException('storage_root_must_be_absolute');
+    }
+    final type = await FileSystemEntity.type(cleanPath, followLinks: true);
+    if (type == FileSystemEntityType.file) {
+      throw FileSystemException('Storage root is a file', cleanPath);
+    }
+    final dir = Directory(cleanPath);
+    await dir.create(recursive: true);
+    final probe = File(
+      p.join(
+        dir.path,
+        '.localchat-write-test-${DateTime.now().microsecondsSinceEpoch}.tmp',
+      ),
+    );
+    await probe.writeAsString('ok', flush: true);
+    try {
+      await probe.delete();
+    } catch (_) {
+      // A failed probe cleanup should not block using an otherwise writable dir.
+    }
     return dir;
   }
 
@@ -339,6 +413,14 @@ class FileStore {
   }
 
   Future<Directory> _downloadsDirectory() async {
+    if (Platform.isWindows && _storageRootPath != null) {
+      final dir = await prepareStorageRootDirectory(_storageRootPath!);
+      return dir;
+    }
+    return _defaultDownloadsDirectory();
+  }
+
+  Future<Directory> _defaultDownloadsDirectory() async {
     if (Platform.isWindows) {
       final profile = Platform.environment['USERPROFILE'];
       if (profile != null && profile.isNotEmpty) {
@@ -354,6 +436,29 @@ class FileStore {
       return dir;
     }
     return receiveDirectory();
+  }
+
+  Future<File> uniqueFileInDirectory(Directory dir, String fileName) {
+    return _uniqueFile(dir, fileName);
+  }
+
+  Future<void> deleteEmptyDirectoriesUnder(String rootPath) async {
+    final root = Directory(rootPath);
+    if (!await root.exists()) return;
+    final dirs = <Directory>[];
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is Directory) dirs.add(entity);
+    }
+    dirs.sort((a, b) => b.path.length.compareTo(a.path.length));
+    for (final dir in dirs) {
+      try {
+        if (await dir.exists() && await dir.list().isEmpty) {
+          await dir.delete();
+        }
+      } catch (_) {
+        // Keep directories that contain unknown files or are currently locked.
+      }
+    }
   }
 
   Future<File> _uniqueFile(Directory dir, String fileName) async {

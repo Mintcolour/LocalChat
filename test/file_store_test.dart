@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:localchat/services/file_store.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('FileStore.sanitizeRelativeDirs', () {
@@ -96,6 +99,43 @@ void main() {
       expect(FileStore.validateFileName('CON.txt'), 'reserved');
       expect(FileStore.validateFileName('report. '), 'trailing');
       expect(FileStore.validateFileName('report.pdf'), isNull);
+    });
+  });
+
+  group('FileStore storage root rules', () {
+    test('uses a configured Windows storage root', () async {
+      if (!Platform.isWindows) return;
+      final root = await Directory.systemTemp.createTemp('localchat-root');
+      addTearDown(() => root.delete(recursive: true));
+      final store = FileStore()..setStorageRootPath(root.path);
+
+      expect(
+        FileStore.isSamePath(await store.currentStorageRootPath(), root.path),
+        isTrue,
+      );
+      final prepared = await store.prepareStorageRootDirectory(root.path);
+      expect(FileStore.isSamePath(prepared.path, root.path), isTrue);
+    });
+
+    test('rejects relative custom storage roots on Windows', () async {
+      if (!Platform.isWindows) return;
+      final store = FileStore();
+
+      expect(
+        () => store.prepareStorageRootDirectory(p.join('relative', 'folder')),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('creates unique names inside a target directory', () async {
+      final root = await Directory.systemTemp.createTemp('localchat-unique');
+      addTearDown(() => root.delete(recursive: true));
+      await File(p.join(root.path, 'report.txt')).writeAsString('old');
+      final store = FileStore();
+
+      final target = await store.uniqueFileInDirectory(root, 'report.txt');
+
+      expect(p.basename(target.path), 'report (1).txt');
     });
   });
 }

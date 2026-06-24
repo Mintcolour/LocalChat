@@ -13,6 +13,7 @@ const _autostartEnabledKey = 'autostart_enabled';
 const _notificationsEnabledKey = 'notifications_enabled';
 const _notificationPreviewEnabledKey = 'notification_preview_enabled';
 const _keepAliveEnabledKey = 'android_keep_alive_enabled';
+const _storageRootPathKey = 'storage_root_path';
 
 /// 设置子控制器：负责语言、外观、自动复制、托盘、开机自启偏好的持久化与原生同步。
 ///
@@ -34,6 +35,7 @@ class SettingsController extends ChangeNotifier {
   bool keepAliveEnabled = Platform.isAndroid;
   String languageCode = 'zh';
   String themeModeCode = 'system';
+  String? storageRootPath;
 
   /// 从数据库与原生状态载入设置。
   Future<void> load() async {
@@ -52,6 +54,11 @@ class SettingsController extends ChangeNotifier {
     keepAliveEnabled = keepAliveRaw == null
         ? Platform.isAndroid
         : keepAliveRaw != 'false';
+    final storedStorageRoot = await db.getSetting(_storageRootPathKey);
+    final cleanStorageRoot = storedStorageRoot?.trim();
+    storageRootPath = cleanStorageRoot == null || cleanStorageRoot.isEmpty
+        ? null
+        : cleanStorageRoot;
     await _loadWindowPreferences();
   }
 
@@ -88,6 +95,18 @@ class SettingsController extends ChangeNotifier {
   Future<void> setKeepAliveEnabled(bool value) async {
     keepAliveEnabled = value;
     await db.setSetting(_keepAliveEnabledKey, value ? 'true' : 'false');
+  }
+
+  Future<void> setStorageRootPath(String value) async {
+    final cleanPath = value.trim();
+    if (cleanPath.isEmpty) return;
+    storageRootPath = cleanPath;
+    await db.setSetting(_storageRootPathKey, cleanPath);
+  }
+
+  Future<void> resetStorageRootPath() async {
+    storageRootPath = null;
+    await db.setSetting(_storageRootPathKey, '');
   }
 
   Future<void> setTrayEnabled(bool value) async {

@@ -54,6 +54,6 @@ void main() {
 
     expect(find.text('15264452556'), findsOneWidget);
     expect(find.byTooltip('在线'), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.byIcon(Icons.fiber_manual_record), findsOneWidget);
   });
 }

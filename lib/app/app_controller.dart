@@ -472,6 +472,48 @@ class AppController extends ChangeNotifier {
     await refresh();
   }
 
+  Future<void> deleteFileMessage(ChatMessage message, bool deleteLocalFile) async {
+    if (deleteLocalFile) {
+      final filePathsToDelete = <String>[];
+      final String? pathOnDisk = message.filePath;
+      if (pathOnDisk != null && pathOnDisk.isNotEmpty) {
+        filePathsToDelete.add(pathOnDisk);
+      }
+      if (message.transferId != null && message.transferId!.isNotEmpty) {
+        final transfer = transfersById[message.transferId];
+        if (transfer != null && transfer.savedPath != null && transfer.savedPath!.isNotEmpty) {
+          filePathsToDelete.add(transfer.savedPath!);
+        }
+      }
+
+      for (final path in filePathsToDelete.toSet()) {
+        try {
+          if (await FileSystemEntity.isDirectory(path)) {
+            final dir = Directory(path);
+            if (await dir.exists()) {
+              await dir.delete(recursive: true);
+            }
+          } else {
+            final file = File(path);
+            if (await file.exists()) {
+              await file.delete();
+            }
+          }
+        } catch (e) {
+          status = languageCode == 'en'
+              ? 'Failed to delete local file: $e'
+              : '删除本地文件失败: $e';
+        }
+      }
+    }
+
+    await db.deleteChatMessage(message.id);
+    messages = messages.where((m) => m.id != message.id).toList();
+    status = languageCode == 'en' ? 'Message deleted' : '消息已删除';
+    await refresh();
+  }
+
+
   Future<void> setLanguageCode(String value) async {
     await settings.setLanguageCode(value);
     transportService.languageCode = settings.languageCode;

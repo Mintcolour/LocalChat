@@ -38,7 +38,7 @@ void main() {
     );
 
     expect(text.networkDiagnosticSummary(result), contains('超时'));
-    expect(text.networkDiagnosticAdviceFor(result), contains('校园网'));
-    expect(text.networkDiagnosticAdviceFor(result), contains('VLAN'));
+    expect(text.networkDiagnosticAdviceFor(result), contains('不同网段'));
+    expect(text.networkDiagnosticAdviceFor(result), contains('隔离'));
   });
 }

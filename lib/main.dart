@@ -268,6 +268,8 @@ class _DevicePane extends StatelessWidget {
     final trusted = controller.devices
         .where((device) => device.trusted && matches(device))
         .toList();
+    final trustedOnline = trusted.where((d) => isPeerOnline(d)).toList();
+    final trustedOffline = trusted.where((d) => !isPeerOnline(d)).toList();
     final discovered = controller.devices
         .where((device) => !device.trusted && matches(device))
         .toList();
@@ -288,13 +290,30 @@ class _DevicePane extends StatelessWidget {
             onChanged: (value) => controller.setConversationFilter(value),
           ),
           const SizedBox(height: 16),
-          _SectionTitle(
-            title: controller.text.trustedDevices,
-            count: trusted.length,
-          ),
-          if (trusted.isEmpty) _EmptyHint(controller.text.noTrustedDevices),
-          for (final device in trusted)
-            _DeviceTile(controller: controller, device: device),
+          if (trusted.isEmpty) ...[
+            _SectionTitle(
+              title: controller.text.trustedDevices,
+              count: 0,
+            ),
+            _EmptyHint(controller.text.noTrustedDevices),
+          ] else ...[
+            _SectionTitle(
+              title: controller.text.trustedDevicesOnline,
+              count: trustedOnline.length,
+            ),
+            if (trustedOnline.isEmpty) _EmptyHint(controller.text.noOnlineDevices),
+            for (final device in trustedOnline)
+              _DeviceTile(controller: controller, device: device),
+            if (trustedOffline.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _SectionTitle(
+                title: controller.text.trustedDevicesOffline,
+                count: trustedOffline.length,
+              ),
+              for (final device in trustedOffline)
+                _DeviceTile(controller: controller, device: device),
+            ],
+          ],
           const SizedBox(height: 16),
           _SectionTitle(
             title: controller.text.discoveredDevices,
@@ -407,12 +426,15 @@ class _DeviceTile extends StatelessWidget {
         leading: Stack(
           clipBehavior: Clip.none,
           children: [
-            _DeviceAvatar(
-              name: controller.titleFor(device),
-              platform: device.platform,
-              avatarSeed: device.avatarSeed,
-              avatarColor: device.avatarColor,
-              trusted: device.trusted,
+            Opacity(
+              opacity: isPeerOnline(device) ? 1.0 : 0.6,
+              child: _DeviceAvatar(
+                name: controller.titleFor(device),
+                platform: device.platform,
+                avatarSeed: device.avatarSeed,
+                avatarColor: device.avatarColor,
+                trusted: device.trusted,
+              ),
             ),
             Positioned(
               right: -2,
@@ -509,7 +531,7 @@ class _PeerStatusBadge extends StatelessWidget {
         ? scheme.outline
         : online
         ? const Color(0xFF10B981) // Clean emerald green for online status
-        : scheme.error;
+        : scheme.outline;
     return Tooltip(
       message: label,
       child: Semantics(
@@ -2305,6 +2327,18 @@ class _FileMessage extends StatelessWidget {
                       color: primaryTextColor,
                       disabledColor: disabledActionColor,
                     ),
+                    _fileActionButton(
+                      tooltip: controller.text.delete,
+                      onPressed: () => _showDeleteFileMessageDialog(
+                        context,
+                        controller,
+                        message,
+                        transfer,
+                      ),
+                      icon: Icons.delete_outline,
+                      color: primaryTextColor,
+                      disabledColor: disabledActionColor,
+                    ),
                   ],
                 ),
               ),
@@ -2387,6 +2421,91 @@ Future<void> _showRenameFileDialog(
     await controller.renameMessageFile(message, transfer, result);
   }
   textController.dispose();
+}
+
+Future<void> _showDeleteFileMessageDialog(
+  BuildContext context,
+  AppController controller,
+  ChatMessage message,
+  Transfer? transfer,
+) async {
+  final filePath = transfer?.savedPath ?? message.filePath;
+  final hasLocalFile = filePath != null &&
+      filePath.isNotEmpty &&
+      (File(filePath).existsSync() || Directory(filePath).existsSync());
+
+  await showDialog<void>(
+    context: context,
+    builder: (context) {
+      final scheme = Theme.of(context).colorScheme;
+      return AlertDialog(
+        title: Text(controller.text.deleteFileConfirmTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(controller.text.deleteFileMessageConfirmBody),
+            const SizedBox(height: 16),
+            Text(
+              controller.text.localFilePath,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(8),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: SelectableText(
+                filePath != null && filePath.isNotEmpty
+                    ? filePath
+                    : controller.text.localFileNotExist,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: filePath != null && filePath.isNotEmpty
+                      ? scheme.onSurface
+                      : scheme.error,
+                ),
+              ),
+            ),
+            if (filePath != null && filePath.isNotEmpty && !hasLocalFile) ...[
+              const SizedBox(height: 8),
+              Text(
+                controller.text.localFileNotExist,
+                style: TextStyle(color: scheme.error, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(controller.text.cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              controller.deleteFileMessage(message, false);
+            },
+            child: Text(controller.text.deleteRecordOnly),
+          ),
+          FilledButton(
+            onPressed: hasLocalFile
+                ? () {
+                    Navigator.of(context).pop();
+                    controller.deleteFileMessage(message, true);
+                  }
+                : null,
+            child: Text(controller.text.deleteFileAndRecord),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 class _FilePreview extends StatelessWidget {

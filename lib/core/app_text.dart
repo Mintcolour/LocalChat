@@ -14,6 +14,9 @@ class AppText {
   String get rescan => en ? 'Rescan' : '重新搜索';
   String get settings => en ? 'Settings' : '设置';
   String get trustedDevices => en ? 'Trusted devices' : '已信任设备';
+  String get trustedDevicesOnline => en ? 'Trusted devices · Online' : '已信任设备 · 在线';
+  String get trustedDevicesOffline => en ? 'Trusted devices · Offline' : '已信任设备 · 离线';
+  String get noOnlineDevices => en ? 'No online devices' : '暂无在线设备';
   String get discoveredDevices => en ? 'Discovered devices' : '发现的设备';
   String get noTrustedDevices => en
       ? 'No trusted devices yet. Open LocalChat on another device on the same Wi-Fi.'
@@ -38,6 +41,14 @@ class AppText {
   String get delete => en ? 'Delete' : '删除';
   String get done => en ? 'Done' : '完成';
   String get deleteConversationTitle => en ? 'Delete chat?' : '删除会话？';
+  String get deleteFileConfirmTitle => en ? 'Delete File Message' : '删除文件消息确认';
+  String get deleteRecordOnly => en ? 'Only delete record' : '仅删除记录';
+  String get deleteFileAndRecord => en ? 'Delete local file & record' : '删除本地文件与记录';
+  String get localFileNotExist => en ? 'Local file not saved or does not exist.' : '本地文件未保存或不存在';
+  String get localFilePath => en ? 'Local file path: ' : '本地文件路径：';
+  String get deleteFileMessageConfirmBody => en
+      ? 'Are you sure you want to delete this file message?'
+      : '确定要删除此文件消息吗？';
   String deleteConversationBody(String title) => en
       ? 'This will delete chat history, transfer indexes, connection info, and trust for "$title". Files on disk will not be deleted.'
       : '将删除“$title”的聊天记录、传输索引、连接信息和信任关系，磁盘上的文件不会被删除。';

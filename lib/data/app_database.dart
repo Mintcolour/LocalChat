@@ -485,6 +485,15 @@ class AppDatabase extends _$AppDatabase {
     )..where((tbl) => tbl.id.equals(conversationId))).go();
   }
 
+  Future<void> deleteChatMessage(String messageId) async {
+    final message = await (select(chatMessages)..where((tbl) => tbl.id.equals(messageId))).getSingleOrNull();
+    if (message != null && message.transferId != null && message.transferId!.isNotEmpty) {
+      await (delete(transfers)..where((tbl) => tbl.id.equals(message.transferId!))).go();
+    }
+    await (delete(chatMessages)..where((tbl) => tbl.id.equals(messageId))).go();
+  }
+
+
   Future<void> deletePeerSession(String deviceId) async {
     await (delete(
       transfers,

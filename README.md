@@ -17,11 +17,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/Picture/主界面.png" alt="LocalChat 主界面" width="860" />
+  <img src="docs/Picture/main_ui.png" alt="LocalChat 主界面" width="860" />
 </p>
 
 <p align="center">
-  <video src="docs/Picture/拖动功能演示.mp4" width="860" controls muted autoplay loop></video>
+  <video src="docs/Picture/drag_demo.mp4" width="860" controls muted autoplay loop></video>
 </p>
 
 <p align="center">

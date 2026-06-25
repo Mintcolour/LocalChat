@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <video src="docs/Picture/drag_demo.mp4" width="860" controls muted autoplay loop></video>
+  <img src="docs/Picture/drag_demo.gif" alt="LocalChat 拖拽发送演示" width="860" />
 </p>
 
 <p align="center">

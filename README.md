@@ -21,7 +21,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/Picture/drag_demo.gif" alt="LocalChat 拖拽发送演示" width="860" />
+  <b>🎥 点击播放拖拽功能演示</b>
+</p>
+<p align="center">
+  <a href="docs/Picture/drag_demo.mp4">
+    <img src="docs/Picture/drag_demo.gif" alt="LocalChat 拖拽发送演示" width="860" />
+  </a>
 </p>
 
 <p align="center">

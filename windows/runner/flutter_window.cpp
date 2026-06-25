@@ -270,6 +270,12 @@ bool FlutterWindow::OnCreate() {
             "quickDropFiles",
             std::make_unique<flutter::EncodableValue>(args));
       });
+  quick_drop_shelf_.SetHideCallback([this]() {
+    if (!window_channel_) {
+      return;
+    }
+    window_channel_->InvokeMethod("quickDropShelfHidden", nullptr);
+  });
   window_channel->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
@@ -353,6 +359,19 @@ bool FlutterWindow::OnCreate() {
             }
           }
           quick_drop_shelf_.SetEnabled(enabled, GetHandle());
+          result->Success();
+          return;
+        }
+        if (method == "setQuickSendAutoHide") {
+          const auto* args = call.arguments();
+          bool auto_hide = true;
+          if (args != nullptr) {
+            const auto* map = std::get_if<flutter::EncodableMap>(args);
+            if (map != nullptr) {
+              auto_hide = BoolFromMap(*map, "autoHide");
+            }
+          }
+          quick_drop_shelf_.SetAutoHide(auto_hide);
           result->Success();
           return;
         }

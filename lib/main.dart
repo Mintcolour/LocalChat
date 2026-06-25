@@ -1632,6 +1632,17 @@ Future<void> _showSettingsDialog(
                   value: controller.quickSendEnabled,
                   onChanged: controller.setQuickSendEnabled,
                 ),
+                if (controller.quickSendEnabled)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16.0),
+                    child: SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(controller.text.quickSendAutoHide),
+                      subtitle: Text(controller.text.quickSendAutoHideSubtitle),
+                      value: controller.quickSendAutoHide,
+                      onChanged: controller.setQuickSendAutoHide,
+                    ),
+                  ),
               ],
               ListTile(
                 contentPadding: EdgeInsets.zero,

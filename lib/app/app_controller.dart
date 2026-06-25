@@ -187,6 +187,7 @@ class AppController extends ChangeNotifier {
   bool get trayEnabled => settings.trayEnabled;
   bool get autostartEnabled => settings.autostartEnabled;
   bool get quickSendEnabled => settings.quickSendEnabled;
+  bool get quickSendAutoHide => settings.quickSendAutoHide;
   bool get notificationsEnabled => settings.notificationsEnabled;
   bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
   bool get keepAliveEnabled => settings.keepAliveEnabled;
@@ -208,7 +209,13 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       await settings.load();
-      await windowService.setQuickDropFilesHandler(handleQuickDropFiles);
+      await windowService.setQuickDropFilesHandler(
+        handleQuickDropFiles,
+        onHide: () {
+          unawaited(settings.setQuickSendEnabled(false));
+          notifyListeners();
+        },
+      );
       await _syncStorageRootFromSettings();
       if (settings.keepAliveEnabled && keepAliveService.isSupported) {
         await keepAliveService.start();
@@ -969,6 +976,11 @@ class AppController extends ChangeNotifier {
     await settings.setQuickSendEnabled(value);
     await _syncQuickSendDevices();
     status = value ? text.quickSendEnabled : text.quickSendDisabled;
+    notifyListeners();
+  }
+
+  Future<void> setQuickSendAutoHide(bool value) async {
+    await settings.setQuickSendAutoHide(value);
     notifyListeners();
   }
 

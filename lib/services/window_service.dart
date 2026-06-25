@@ -19,7 +19,10 @@ class WindowService {
 
   /// 注册 Windows 快捷拖拽投递回调。原生层只负责采集目标设备与路径；
   /// 实际信任/在线校验和发送仍由 Dart 控制器完成。
-  Future<void> setQuickDropFilesHandler(QuickDropFilesHandler? handler) async {
+  Future<void> setQuickDropFilesHandler(
+    QuickDropFilesHandler? handler, {
+    void Function()? onHide,
+  }) async {
     if (!isSupported) return;
     try {
       if (handler == null) {
@@ -27,14 +30,19 @@ class WindowService {
         return;
       }
       _channel.setMethodCallHandler((call) async {
-        if (call.method != 'quickDropFiles') return null;
-        final args = call.arguments;
-        if (args is! Map) return null;
-        final deviceId = args['deviceId'];
-        final rawPaths = args['paths'];
-        if (deviceId is! String || rawPaths is! List) return null;
-        final paths = rawPaths.whereType<String>().toList();
-        await handler(deviceId, paths);
+        if (call.method == 'quickDropFiles') {
+          final args = call.arguments;
+          if (args is! Map) return null;
+          final deviceId = args['deviceId'];
+          final rawPaths = args['paths'];
+          if (deviceId is! String || rawPaths is! List) return null;
+          final paths = rawPaths.whereType<String>().toList();
+          await handler(deviceId, paths);
+        } else if (call.method == 'quickDropShelfHidden') {
+          if (onHide != null) {
+            onHide();
+          }
+        }
         return null;
       });
     } catch (_) {
@@ -149,6 +157,22 @@ class WindowService {
     try {
       await _channel.invokeMethod<void>('setQuickSendEnabled', {
         'enabled': enabled,
+      });
+    } on MissingPluginException {
+      // ignore
+    } on PlatformException {
+      // ignore
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  /// 设置贴边是否自动隐藏成条形。
+  Future<void> setQuickSendAutoHide(bool autoHide) async {
+    if (!isSupported) return;
+    try {
+      await _channel.invokeMethod<void>('setQuickSendAutoHide', {
+        'autoHide': autoHide,
       });
     } on MissingPluginException {
       // ignore

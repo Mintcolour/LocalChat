@@ -1,240 +1,150 @@
-# LocalChat
+<p align="center">
+  <img src="docs/logo.png" width="128" alt="LocalChat Logo" />
+</p>
 
-LocalChat is a Flutter LAN direct-transfer tool for sending text, links, images, and files between Windows and Android devices through a chat-style interface.
+<h1 align="center">LocalChat</h1>
 
-LocalChat 是一个 Flutter 局域网直连传输工具，用聊天窗口的方式在 Windows 和 Android 设备之间发送文字、链接、图片和文件。
+<p align="center"><sub><b>LocalChat</b> — 局域网直连、聊天式文件与文本互传工具</sub></p>
 
-- [中文说明](#中文说明)
-- [English](#english)
+<p align="center">
+  <b>简体中文</b> · <a href="#english">English</a>
+</p>
 
-## 中文说明
+<p align="center">
+  <a href="https://github.com/Mintcolour/LocalChat/releases">
+    <img src="https://img.shields.io/github/v/release/Mintcolour/LocalChat?label=Releases&labelColor=2D353B&color=8DA101&logo=github&logoColor=A7C080" alt="Latest Release" />
+  </a>
+</p>
 
-### 下载
+<p align="center">
+  <img src="docs/Picture/主界面.png" alt="LocalChat 主界面" width="860" />
+</p>
 
-- GitHub Releases：<https://github.com/Mintcolour/LocalChat/releases>
+<p align="center">
+  <video src="docs/Picture/拖动功能演示.mp4" width="860" controls muted autoplay loop></video>
+</p>
 
-### 项目定位
+<p align="center">
+  一个基于 Flutter 构建的局域网直连传输工具，用聊天窗口的方式在 Windows 和 Android 设备之间极速、安全、私密地发送文字、链接、图片、文件及文件夹。
+  <br/>
+  不经过公网中转，不依赖第三方账号，支持拖拽投递、设置自动隐藏呼吸条等便捷交互。
+</p>
 
-LocalChat 不是云盘，也不是公网 IM。它面向更常见的本地场景：电脑和手机处在同一网络环境时，可以快速、私密、可追踪地互传内容，不需要登录账号，也不依赖第三方中转服务器。
+---
 
-### 项目亮点
+## 简体中文 🚀
 
-- 局域网直连：设备通过 UDP 广播发现彼此，传输走本地 HTTP 服务。
-- 聊天式体验：文字、链接、图片和文件都落在同一条会话时间线里，方便回看发送记录、传输状态和保存位置。
-- 首次可信配对：支持多队列并发配对请求，通过聊天内嵌配对卡片核对 6 位数字校验码建立信任关系。
-- 应用层安全：请求签名使用 Ed25519，密钥协商使用 X25519，文字与文件分块使用 AES-GCM 加密。
-- 跨端统一实现：Windows 和 Android 共享主要业务逻辑，便于继续扩展平台能力。
+### 📌 项目定位
 
-### 功能状态
+LocalChat 不是云盘，也不是公网 IM。它专注于高频的本地场景：当您的电脑和手机处在同一局域网时，提供极速、安全且可追溯的直连传输体验。
 
-已实现：
+### 🌟 功能亮点
 
-- 聊天内嵌配对卡片：配对请求移至聊天区域，支持 65 秒超时过期，多端多请求并发管理。
-- 网络诊断工具：手动添加设备时提供校园网等复杂网络环境的连接测试与诊断指导。
-- 系统通知与后台保活：集成系统通知管理（带消息预览开关），后台自动保活并根据生命周期自动同步未读状态。
-- 文件夹递归传输并保留目录结构，单文件和文件夹传输可共享会话历史。
-- 手动填写 IP 和端口添加设备，支持跨网段直连场景。
-- Windows 托盘、开机自启、单实例唤醒。
-- 独立传输中心，集中查看进行中、已完成、失败或已取消的文件传输。
-- 出站传输排队、整组进度展示和取消兼容能力。
-- 发送前附件预览、排序、移除，支持多文件整理后统一发送。
-- 图片发送前裁切、旋转、文字标注，编辑过程仅在本地完成。
-- 接收文件支持重命名，并按会话、年月和文件类型分类归档。
-- 传输历史支持打开文件、打开文件夹，以及对已保存接收文件重命名。
-- 浅色、深色、跟随系统主题三种外观模式。
-- 失败消息重试、聊天记录分页加载、日期分隔、未读数和消息搜索定位。
-- 设备在线/离线状态使用独立图标显示，不会被最近消息预览覆盖。
-- 设置页显示本机局域网 IP 和监听端口，便于手动连接。
-- 移动端会话切换动画，以及返回键退出会话问题修复。
-- Windows 拖拽发送、剪贴板文件或图片发送、Android 系统分享入口。
-- Drift/SQLite 本地历史保存设备、会话、消息、传输和设置数据。
+- **⚡ 局域网直连**: 自动通过 UDP 广播发现设备，使用高性能本地 HTTP 服务直连传输，速度仅受限于网络带宽。
+- **💬 聊天式体验**: 将文字、链接、图片、文件和文件夹统一落入聊天会话时间线，传输记录、状态与保存路径一目了然。
+- **💻 桌面端快捷拖拽 (Quick Drop Shelf)**: 拖拽文件到悬浮窗口图标即可唤出设备卡片投递发送。支持“贴边自动隐藏”呼吸条和右键快捷隐藏。
+- **🔒 身份安全防护**: 采用 Ed25519 签名验证、X25519 密钥协商，并使用 AES-GCM 对文字和文件块进行端到端加密。
+- **🎨 统一核心逻辑**: 共享 Windows 和 Android 的业务底座，具备网络诊断、自定义存储路径等丰富功能。
 
-当前限制：
+<details>
+<summary><b>🛠️ 查看已实现功能详情 (点击展开)</b></summary>
 
-- 自动发现主要面向同一局域网；跨网段设备需要手动填写 IP 和端口。
-- MVP 仍以本地前台收发为主，后台常驻和更完整的断点续传仍在规划中。
+- **💬 聊天内嵌配对卡片**：在聊天区域完成可信配对确认，支持 65 秒超时及多请求并发。
+- **⚙️ 桌面快捷悬浮托盘**：贴边停靠、延时折叠、右键菜单，长设备名折行显示（DT_WORDBREAK）。
+- **🔧 网络诊断工具**：在手动添加设备时提供连接测试，引导排查校园网等复杂网络环境。
+- **📢 系统通知与保活**：集成系统原生通知（包含预览开关），在后台智能保活。
+- **📁 文件夹递归传输**：支持文件夹在传输时保留层级目录结构。
+- **🌐 跨网段手动直连**：支持通过手动输入 IP 和端口添加非同网段的直连设备。
+- **🔔 Windows 托盘与开机自启**：支持开机自动运行、单实例检测唤醒。
+- **📊 独立传输中心**：集中管理所有进行中、完成、失败或已取消的任务队列。
+- **📷 图片编辑与标注**：发送图片前支持裁剪、旋转、画笔和文字标注，纯本地处理。
+- **💾 归档与重命名**：支持按会话、年月、类型分类归档，允许在传输历史中对文件直接重命名。
+- **🎨 主题随心切换**：支持浅色、深色、跟随系统三种主题模式。
 
-### 安装与开发
+</details>
 
-1. 按 Flutter 官方文档安装 Flutter SDK：<https://docs.flutter.dev/get-started/install>
-2. 如需构建 Android，请按官方文档安装 Android toolchain：<https://docs.flutter.dev/get-started/install/windows/mobile>
-3. 如需构建 Windows，请按官方文档启用 Windows desktop：<https://docs.flutter.dev/platform-integration/windows/setup>
-4. 安装完成后执行 `flutter doctor`，确认依赖齐全。
+<details>
+<summary><b>📦 安装与开发说明 (点击展开)</b></summary>
 
-仓库提供了 `scripts/flutter_env.ps1` 作为 PowerShell 环境辅助脚本。使用前请按本机实际工具链自行调整，不要把本地路径或私有环境信息写回文档或提交到仓库。
+#### 环境依赖
+1. 按照 Flutter 官方文档安装 SDK: <https://docs.flutter.dev/get-started/install>
+2. 构建 Android: 安装 Android toolchain
+3. 构建 Windows: 启用 Windows 桌面开发支持
 
-### 常用命令
+#### 常用开发命令
+- **获取依赖**: `flutter pub get`
+- **代码分析与测试**: `flutter analyze` / `flutter test`
+- **构建 Android Release**: `flutter build apk --release --split-per-abi`
+- **构建 Windows Release**: `flutter build windows --release`
 
-安装依赖：
+</details>
 
-```powershell
-flutter pub get
-```
+### 💡 基本使用流程
 
-运行检查和测试：
+1. 两端同时打开 LocalChat 客户端。
+2. 在设备列表内找到目标，或手动输入 IP 与端口连接。
+3. 确认 6 位配对校验码以建立可信关系。
+4. 在会话中发文字、图片、拖拽文件或粘贴剪贴板即可完成投递！
 
-```powershell
-flutter analyze
-flutter test
-```
+---
 
-构建 Android Release APK：
+<h2 id="english">English 💻</h2>
 
-```powershell
-flutter build apk --release --split-per-abi
-```
+### 📌 Overview
 
-APK 输出目录：
+LocalChat is not a cloud drive or a public messenger. It is built for a common offline LAN environment, helping you move content directly between your phone and computer without third-party servers.
 
-```text
-build\app\outputs\flutter-apk
-```
+### 🌟 Highlights
 
-构建 Windows Release：
-
-```powershell
-flutter build windows --release
-```
-
-Windows 输出目录：
-
-```text
-build\windows\x64\runner\Release
-```
-
-### 基本使用流程
-
-1. 在两台设备上打开 LocalChat。
-2. 在设备列表中找到对方设备，或手动输入对方的 IP 和端口。
-3. 首次连接时确认 6 位校验码，建立信任关系。
-4. 在会话中发送文字、链接、图片、文件或文件夹。
-5. Windows 可拖拽文件到聊天区，也可以粘贴剪贴板中的文件或图片；Android 可通过系统分享菜单发送到 LocalChat。
-
-### 适用场景
-
-- 手机和电脑之间临时传截图、安装包、文档、链接。
-- 不希望文件经过公网服务器的办公室或家庭局域网传输。
-- 需要保留传输上下文和历史记录，而不只是一次性投递文件。
-- 想研究 Flutter 跨端、局域网发现、安全传输和本地持久化组合实现的示例项目。
-
-### Roadmap
-
-- 更完整的断点续传和传输恢复能力。
-- 更稳定的后台常驻、移动端保活和网络切换体验。
-- 更多平台支持，以及更细的权限与设备管理能力。
-
-## English
-
-### Downloads
-
-- GitHub Releases: <https://github.com/Mintcolour/LocalChat/releases>
-
-### Overview
-
-LocalChat is not a cloud drive or a public instant messenger. It is built for the more common local workflow: when your phone and computer are on the same network, you can quickly and privately exchange content without signing in, and without routing data through a third-party relay service.
-
-### Highlights
-
-- LAN direct transfer: devices discover each other with UDP broadcast and transfer data through a local HTTP service.
-- Chat-style workflow: text, links, images, and files stay in one conversation timeline so status, sender, time, and saved location remain visible.
-- Trusted first pairing: supports concurrent multi-request queuing, establishing trust via inline chat pairing cards and 6-digit verification codes.
-- Application-level security: requests are signed with Ed25519, peers derive shared keys with X25519, and text plus file chunks are encrypted with AES-GCM.
-- Shared cross-platform core: Windows and Android use the same main application logic, making future platform expansion easier.
-
-### Current Status
-
-Implemented:
-
-- Inline chat pairing cards: pairing requests are handled in-chat with 65-second timeouts and concurrent request management.
-- Network diagnostic tool: provides connectivity tests and troubleshooting tips for complex networks like campus intranets when manually adding peers.
-- System notifications & keep-alive: supports native notifications (with message preview toggle) and background keep-alive, automatically synchronizing unread status on foreground lifecycle transitions.
-- Recursive folder transfer with preserved directory structure, integrated into the same conversation history as regular files.
-- Manual device add via IP and port for cross-subnet connections.
-- Windows tray integration, startup launch, and single-instance activation.
-- A dedicated transfer center for active, completed, failed, and canceled file transfers.
-- Outbound transfer queueing, grouped progress, and cancel compatibility.
-- Attachment preview, sorting, and removal before send.
-- Local image crop, rotate, and text annotation before sending.
-- Received-file rename support plus archiving by conversation, year/month, and file type.
-- Transfer-history actions for opening files, opening folders, and renaming saved received files.
-- Light, dark, and follow-system theme modes.
-- Failed message retry, paginated chat history, date separators, unread counts, and message search positioning.
-- Persistent online/offline device-status icons that stay visible alongside message previews.
-- Local LAN IP and listening port display in settings for easier manual connection.
-- Mobile conversation transition animations and a fix for the back-navigation exit issue.
-- Windows drag-and-drop, clipboard file/image sending, and Android system share entry points.
-- Drift/SQLite persistence for devices, conversations, messages, transfers, and settings.
-
-Known limits:
-
-- Automatic discovery is mainly designed for the same LAN; cross-subnet peers still require a manually entered IP and port.
-- The current MVP is still centered on foreground transfers. Better background persistence and resumable transfer support are still on the roadmap.
-
-### Setup
-
-1. Install Flutter by following the official guide: <https://docs.flutter.dev/get-started/install>
-2. For Android builds, set up the Android toolchain with the official Windows guide: <https://docs.flutter.dev/get-started/install/windows/mobile>
-3. For Windows builds, enable Windows desktop support with the official guide: <https://docs.flutter.dev/platform-integration/windows/setup>
-4. Run `flutter doctor` after setup and fix any reported dependency issues.
-
-The repository includes `scripts/flutter_env.ps1` as a PowerShell environment helper. Adjust it for your own local toolchain before using it, and do not commit local paths or private environment details back into the repository documentation.
-
-### Common Commands
-
-Install dependencies:
-
-```powershell
-flutter pub get
-```
-
-Run analysis and tests:
-
-```powershell
-flutter analyze
-flutter test
-```
-
-Build Android release APKs:
-
-```powershell
-flutter build apk --release --split-per-abi
-```
-
-APK output directory:
-
-```text
-build\app\outputs\flutter-apk
-```
-
-Build a Windows release:
-
-```powershell
-flutter build windows --release
-```
-
-Windows output directory:
-
-```text
-build\windows\x64\runner\Release
-```
-
-### Basic Workflow
-
-1. Open LocalChat on two devices.
-2. Find the peer device in the device list, or add it manually by IP and port.
-3. Confirm the 6-digit verification code on first connection.
-4. Send text, links, images, files, or folders from the conversation.
-5. On Windows, drag files into the chat area or paste files and images from the clipboard. On Android, use the system share sheet to send content into LocalChat.
-
-### Use Cases
-
-- Quickly move screenshots, APKs, documents, and links between a phone and a computer.
-- Transfer files inside a home or office LAN without using a public server.
-- Keep transfer context and history instead of relying on one-off send tools.
-- Study a practical Flutter example that combines cross-platform UI, LAN discovery, secure transfer, and local persistence.
-
-### Roadmap
-
-- More complete resumable transfer and recovery behavior.
-- Stronger background persistence, mobile keep-alive behavior, and network-switch handling.
-- More platforms and finer-grained permission and device management.
+- **⚡ Direct Transfer**: Discover peers via UDP broadcast and transfer files over local HTTP at maximum network speeds.
+- **💬 Timeline UI**: Message history, links, images, and files reside in a single conversation thread, keeping tracking clear.
+- **💻 Desktop Drag-Send (Quick Drop Shelf)**: Drag files to the screen-edge float window to quick-send. Supports docking auto-hide and right-click context menu.
+- **🔒 Secure Pairing**: Uses Ed25519 signatures, X25519 key exchange, and AES-GCM encryption for messages and file streams.
+- **🎨 Cross-Platform Core**: Sharing core code between Windows & Android with features like custom storage and network diagnostics.
+
+<details>
+<summary><b>🛠️ Full Features & Implementation Details (Click to expand)</b></summary>
+
+- **💬 Inline Chat Pairing Cards**: Peer confirmation via 6-digit verification code directly in conversation timeline.
+- **⚙️ Native Drop Shelf**: Smooth animation, auto-docking, right-click actions, and word wrap for long device names.
+- **🔧 Diagnostic Tool**: Connectivity testing and tips for complex setups like university networks.
+- **📢 Native Notifications**: Standard notifications with custom preview toggle and smart keep-alive.
+- **📁 Folder Struct Transfer**: Preserves directory trees when recursively sending folders.
+- **🌐 Cross-Subnet Direct**: Add peers manually using IP address and port.
+- **🔔 Windows Integration**: Minimizes to system tray, runs at startup, and enforces single-instance launch.
+- **📊 Transfer Queue Center**: Dedicated page for pausing, canceling, and resuming large batch file queues.
+- **📷 Local Image Editor**: Crop, rotate, draw, and annotate images locally before hitting send.
+- **💾 Auto Archive**: Sorts received files by month/type and allows file renaming directly in-app.
+
+</details>
+
+<details>
+<summary><b>📦 Setup & Development Guide (Click to expand)</b></summary>
+
+#### Prerequisites
+1. Setup Flutter SDK: <https://docs.flutter.dev/get-started/install>
+2. Build Android: Install Android SDK toolchain
+3. Build Windows: Enable desktop support
+
+#### CLI Reference
+- **Install dependencies**: `flutter pub get`
+- **Lint & test**: `flutter analyze` / `flutter test`
+- **Build Android**: `flutter build apk --release --split-per-abi`
+- **Build Windows**: `flutter build windows --release`
+
+</details>
+
+### 💡 Workflow
+
+1. Open LocalChat on both devices.
+2. Select peer or enter manual IP and Port.
+3. Validate 6-digit code to pair.
+4. Drag & drop files or type text to send!
+
+---
+
+## 📝 Roadmap
+
+- **⚙️ Robust Resumable Transfer**: Implementing granular chunk recovery.
+- **🔋 Deep Background Optimization**: Enhancing mobile sleep survival rates and connectivity transitions.
+- **📱 Multitude Platforms**: Paving ways to more OS integrations and user-defined device access control.

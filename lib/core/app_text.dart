@@ -13,6 +13,7 @@ class AppText {
   String get appTitle => 'LocalChat';
   String get rescan => en ? 'Rescan' : '重新搜索';
   String get settings => en ? 'Settings' : '设置';
+  String get aboutLocalChat => en ? 'About LocalChat' : '关于 LocalChat';
   String get trustedDevices => en ? 'Trusted devices' : '已信任设备';
   String get trustedDevicesOnline =>
       en ? 'Trusted devices · Online' : '已信任设备 · 在线';
@@ -58,6 +59,62 @@ class AppText {
       : '将删除“$title”的聊天记录、传输索引、连接信息和信任关系，磁盘上的文件不会被删除。';
   String get localNickname => en ? 'Local nickname' : '本机昵称';
   String get editLocalNickname => en ? 'Edit local nickname' : '修改本机昵称';
+  String get appVersionUnknown => en ? 'Version unavailable' : '版本信息不可用';
+  String aboutVersionSubtitle(String version) =>
+      en ? 'Version $version' : '版本 $version';
+  String get currentVersion => en ? 'Current version' : '当前版本';
+  String get author => en ? 'Author' : '作者';
+  String get authorName => 'Mintcolour';
+  String get openSourceLicense => en ? 'Open source license' : '开源协议';
+  String get mitLicense => en ? 'MIT License' : 'MIT 协议';
+  String get githubCommunity => en ? 'Open source community' : '开源社区';
+  String get githubCommunitySubtitle =>
+      en ? 'GitHub repository and community' : 'GitHub 仓库与社区';
+  String get releasePage => en ? 'Releases' : '发布页面';
+  String get releasePageSubtitle =>
+      en ? 'Download installers and release notes' : '下载安装包并查看发布说明';
+  String get issueTracker => en ? 'Issues' : '问题反馈';
+  String get issueTrackerSubtitle =>
+      en ? 'Report bugs or request features' : '反馈问题或提出功能建议';
+  String get copyVersionInfo => en ? 'Copy version info' : '复制版本信息';
+  String get versionInfoCopied =>
+      en ? 'Version info copied to clipboard' : '版本信息已复制到剪贴板';
+  String get thirdPartyLicenses => en ? 'Third-party licenses' : '第三方开源许可';
+  String get checkForUpdates => en ? 'Check for updates' : '检查更新';
+  String get checkingForUpdates => en ? 'Checking for updates...' : '正在检查更新...';
+  String get dailyUpdateCheck => en ? 'Check for updates daily' : '每日自动检查更新';
+  String get dailyUpdateCheckSubtitle => en
+      ? 'Off by default. When enabled, LocalChat checks GitHub Releases at most once every 24 hours.'
+      : '默认关闭。开启后 LocalChat 每 24 小时最多访问一次 GitHub Releases。';
+  String get dailyUpdateCheckEnabled =>
+      en ? 'Daily update checks enabled' : '已开启每日自动检查更新';
+  String get dailyUpdateCheckDisabled =>
+      en ? 'Daily update checks disabled' : '已关闭每日自动检查更新';
+  String updateAvailable(String version) =>
+      en ? 'LocalChat $version is available' : 'LocalChat $version 可更新';
+  String updateAvailableBody(String current, String latest) => en
+      ? 'Current version: $current\nLatest version: $latest\n\nOpen GitHub Releases to download the update.'
+      : '当前版本：$current\n最新版本：$latest\n\n打开 GitHub Releases 下载新版安装包。';
+  String updateUpToDate(String version) =>
+      en ? 'Already up to date ($version)' : '已是最新版本（$version）';
+  String updateUpToDateBody(String current) =>
+      en ? 'Current version: $current' : '当前版本：$current';
+  String get updateCheckFailed => en ? 'Update check failed' : '检查更新失败';
+  String updateCheckFailedBody(String? error) {
+    if (error == null || error.isEmpty) {
+      return en
+          ? 'Could not check GitHub Releases. Try again later.'
+          : '无法检查 GitHub Releases，请稍后重试。';
+    }
+    return en
+        ? 'Could not check GitHub Releases.\n$error'
+        : '无法检查 GitHub Releases。\n$error';
+  }
+
+  String get openReleasePage => en ? 'Open Releases' : '打开发布页';
+  String get linkCopiedAfterOpenFailed => en
+      ? 'Could not open the link. URL copied to clipboard.'
+      : '无法打开链接，已复制 URL 到剪贴板。';
   String get localNetworkEndpoints => en ? 'Local IP / port' : '本机 IP / 端口';
   String get loadingLocalNetworkEndpoints =>
       en ? 'Detecting local network addresses...' : '正在检测本机局域网地址...';

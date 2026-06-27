@@ -20,8 +20,11 @@ import '../models/pending_attachment.dart';
 import '../models/quick_send_device.dart';
 import '../models/transfer_views.dart';
 import '../models/chat_page.dart';
+import '../models/app_info.dart';
+import '../models/update_check.dart';
 import 'settings_controller.dart';
 import '../services/android_keep_alive_service.dart';
+import '../services/app_info_service.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/file_store.dart';
@@ -30,11 +33,14 @@ import '../services/notification_service.dart';
 import '../services/secure_key_store.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
+import '../services/update_check_service.dart';
 import '../services/window_service.dart';
 
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 const _storageRootOperationKey = 'storageRoot';
+const _updateCheckOperationKey = 'updateCheck';
+const _dailyUpdateCheckInterval = Duration(hours: 24);
 
 class StorageMigrationResult {
   const StorageMigrationResult({required this.moved, required this.skipped});
@@ -51,12 +57,18 @@ class AppController extends ChangeNotifier {
     SecureKeyStore? secureKeyStore,
     NotificationService? notificationService,
     AndroidKeepAliveService? keepAliveService,
+    AppInfoService? appInfoService,
+    UpdateCheckService? updateCheckService,
+    DateTime Function()? now,
   }) : db = database ?? AppDatabase(),
        fileStore = fileStore ?? FileStore(),
        clipboardImportService =
            clipboardImportService ?? ClipboardImportService(),
        notificationService = notificationService ?? NotificationService(),
-       keepAliveService = keepAliveService ?? const AndroidKeepAliveService() {
+       keepAliveService = keepAliveService ?? const AndroidKeepAliveService(),
+       appInfoService = appInfoService ?? const AppInfoService(),
+       updateCheckService = updateCheckService ?? UpdateCheckService(),
+       _now = now ?? DateTime.now {
     // 生产环境由 main() 传入真实 SecureKeyStore；测试默认不传（回退数据库明文），
     // 避免依赖平台安全存储插件。
     identityService = IdentityService(db, secureKeyStore: secureKeyStore);
@@ -76,6 +88,9 @@ class AppController extends ChangeNotifier {
   final ClipboardImportService clipboardImportService;
   final NotificationService notificationService;
   final AndroidKeepAliveService keepAliveService;
+  final AppInfoService appInfoService;
+  final UpdateCheckService updateCheckService;
+  final DateTime Function() _now;
   final WindowService windowService = const WindowService();
   late final IdentityService identityService;
   late final SecurityService securityService;
@@ -159,6 +174,8 @@ class AppController extends ChangeNotifier {
   String? lastError;
   String? notificationText;
   int notificationSerial = 0;
+  AppInfo? appInfo;
+  UpdateCheckResult? updateCheckResult;
   bool _appForeground = true;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
@@ -191,15 +208,23 @@ class AppController extends ChangeNotifier {
   bool get notificationsEnabled => settings.notificationsEnabled;
   bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
   bool get keepAliveEnabled => settings.keepAliveEnabled;
+  bool get dailyUpdateCheckEnabled => settings.dailyUpdateCheckEnabled;
   bool get keepAliveSupported => keepAliveService.isSupported;
   bool get storageRootOperationInProgress =>
       isOperationActive(_storageRootOperationKey);
+  bool get updateCheckInProgress => isOperationActive(_updateCheckOperationKey);
   bool get hasCustomStorageRootPath => settings.storageRootPath != null;
+  DateTime? get lastUpdateCheckAt => settings.lastUpdateCheckAt;
   String get languageCode => settings.languageCode;
   String get themeModeCode => settings.themeModeCode;
   set themeModeCode(String value) => settings.themeModeCode = value;
   set languageCode(String value) => settings.languageCode = value;
   int get localListenPort => transportService.port;
+  String get appVersionLabel {
+    final info = appInfo;
+    return info == null ? text.appVersionUnknown : info.displayVersion;
+  }
+
   String storageRootPath = '';
   String defaultStorageRootPath = '';
 
@@ -209,6 +234,7 @@ class AppController extends ChangeNotifier {
     try {
       identity = await identityService.load();
       await settings.load();
+      await loadAppInfo();
       await windowService.setQuickDropFilesHandler(
         handleQuickDropFiles,
         onHide: () {
@@ -259,6 +285,7 @@ class AppController extends ChangeNotifier {
           ? 'Discovering LAN devices, local port $port'
           : '正在局域网内发现设备，本机端口 $port';
       initialized = true;
+      unawaited(checkForUpdates(manual: false));
     } catch (error) {
       lastError = '$error';
       status = languageCode == 'en' ? 'Startup failed' : '启动失败';
@@ -742,6 +769,77 @@ class AppController extends ChangeNotifier {
               ? 'Background reliability will be reduced'
               : '已关闭后台保持连接，后台可靠性会下降');
     notifyListeners();
+  }
+
+  Future<AppInfo?> loadAppInfo() async {
+    if (appInfo != null) return appInfo;
+    try {
+      appInfo = await appInfoService.load();
+      notifyListeners();
+      return appInfo;
+    } catch (error) {
+      lastError = '$error';
+      return null;
+    }
+  }
+
+  Future<void> setDailyUpdateCheckEnabled(bool value) async {
+    await settings.setDailyUpdateCheckEnabled(value);
+    status = value
+        ? text.dailyUpdateCheckEnabled
+        : text.dailyUpdateCheckDisabled;
+    notifyListeners();
+  }
+
+  Future<UpdateCheckResult?> checkForUpdates({bool manual = true}) async {
+    if (updateCheckInProgress) return updateCheckResult;
+    if (!manual && !_shouldRunDailyUpdateCheck()) return updateCheckResult;
+
+    final info = await loadAppInfo();
+    if (info == null) {
+      if (manual) {
+        status = text.updateCheckFailed;
+        notifyListeners();
+      }
+      return null;
+    }
+
+    _beginOperation(_updateCheckOperationKey);
+    lastError = null;
+    if (manual) {
+      status = text.checkingForUpdates;
+    }
+    notifyListeners();
+    try {
+      final result = await updateCheckService.check(
+        currentVersion: info.displayVersion,
+      );
+      updateCheckResult = result;
+      await settings.setLastUpdateCheckAt(_now());
+
+      if (result.hasUpdate && result.latestRelease != null) {
+        status = text.updateAvailable(result.latestRelease!.tagName);
+        notificationText = status;
+        notificationSerial++;
+      } else if (manual && result.isUpToDate && result.latestRelease != null) {
+        status = text.updateUpToDate(result.latestRelease!.tagName);
+      } else if (manual && result.failed) {
+        lastError = result.error;
+        status = text.updateCheckFailed;
+      }
+      return result;
+    } finally {
+      _endOperation(_updateCheckOperationKey);
+      notifyListeners();
+    }
+  }
+
+  bool _shouldRunDailyUpdateCheck() {
+    if (!settings.dailyUpdateCheckEnabled) return false;
+    final lastCheck = settings.lastUpdateCheckAt;
+    if (lastCheck == null) return true;
+    final elapsed = _now().toUtc().difference(lastCheck.toUtc());
+    return elapsed >= _dailyUpdateCheckInterval;
   }
 
   Future<void> setStorageRootPath(

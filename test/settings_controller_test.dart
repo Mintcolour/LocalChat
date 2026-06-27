@@ -3,7 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:localchat/app/app_controller.dart';
 import 'package:localchat/app/settings_controller.dart';
 import 'package:localchat/data/app_database.dart';
+import 'package:localchat/models/app_info.dart';
+import 'package:localchat/models/update_check.dart';
+import 'package:localchat/services/app_info_service.dart';
 import 'package:localchat/services/android_keep_alive_service.dart';
+import 'package:localchat/services/update_check_service.dart';
 import 'package:localchat/services/window_service.dart';
 
 class _NoopWindowService extends WindowService {
@@ -33,6 +37,31 @@ class _FakeKeepAliveService extends AndroidKeepAliveService {
   }
 }
 
+class _FakeAppInfoService extends AppInfoService {
+  const _FakeAppInfoService();
+
+  @override
+  Future<AppInfo> load() async => const AppInfo(
+    appName: 'LocalChat',
+    version: '1.3.3',
+    buildNumber: '7',
+    platform: 'Windows',
+  );
+}
+
+class _CountingUpdateCheckService extends UpdateCheckService {
+  _CountingUpdateCheckService(this.result) : super(fetcher: () async => {});
+
+  final UpdateCheckResult result;
+  int calls = 0;
+
+  @override
+  Future<UpdateCheckResult> check({required String currentVersion}) async {
+    calls++;
+    return result;
+  }
+}
+
 void main() {
   test('SettingsController persists and reloads preferences', () async {
     final db = AppDatabase(NativeDatabase.memory());
@@ -51,6 +80,8 @@ void main() {
     await settings.setQuickSendEnabled(true);
     await settings.setQuickSendAutoHide(false);
     await settings.setStorageRootPath(r'C:\LocalChatStore');
+    await settings.setDailyUpdateCheckEnabled(true);
+    await settings.setLastUpdateCheckAt(DateTime.utc(2026, 6, 27, 1));
 
     expect(settings.languageCode, 'en');
     expect(settings.themeModeCode, 'dark');
@@ -61,6 +92,8 @@ void main() {
     expect(settings.quickSendEnabled, isTrue);
     expect(settings.quickSendAutoHide, isFalse);
     expect(settings.storageRootPath, r'C:\LocalChatStore');
+    expect(settings.dailyUpdateCheckEnabled, isTrue);
+    expect(settings.lastUpdateCheckAt, DateTime.utc(2026, 6, 27, 1));
 
     // 重新载入应从数据库恢复。
     final reloaded = SettingsController(
@@ -77,6 +110,8 @@ void main() {
     expect(reloaded.quickSendEnabled, isTrue);
     expect(reloaded.quickSendAutoHide, isFalse);
     expect(reloaded.storageRootPath, r'C:\LocalChatStore');
+    expect(reloaded.dailyUpdateCheckEnabled, isTrue);
+    expect(reloaded.lastUpdateCheckAt, DateTime.utc(2026, 6, 27, 1));
 
     await reloaded.resetStorageRootPath();
     expect(reloaded.storageRootPath, isNull);
@@ -128,5 +163,49 @@ void main() {
     expect(controller.isOperationActive('sendText:peer-1'), isFalse);
     // busy 仅在启动时为 true，操作状态独立于 busy。
     expect(controller.busy, isFalse);
+  });
+
+  test('daily update checks are persisted and throttled', () async {
+    final now = DateTime.utc(2026, 6, 27, 8);
+    final db = AppDatabase(NativeDatabase.memory());
+    final updateService = _CountingUpdateCheckService(
+      UpdateCheckResult.upToDate(
+        currentVersion: '1.3.3+7',
+        latestRelease: const ReleaseInfo(
+          tagName: 'v1.3.3',
+          htmlUrl:
+              'https://github.com/Mintcolour/LocalChat/releases/tag/v1.3.3',
+          name: '',
+          body: '',
+        ),
+      ),
+    );
+    final controller = AppController(
+      database: db,
+      appInfoService: const _FakeAppInfoService(),
+      updateCheckService: updateService,
+      now: () => now,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.checkForUpdates(manual: false);
+    expect(updateService.calls, 0);
+
+    await controller.setDailyUpdateCheckEnabled(true);
+    await controller.settings.setLastUpdateCheckAt(
+      now.subtract(const Duration(hours: 1)),
+    );
+    await controller.checkForUpdates(manual: false);
+    expect(updateService.calls, 0);
+
+    await controller.checkForUpdates();
+    expect(updateService.calls, 1);
+
+    await controller.settings.setLastUpdateCheckAt(
+      now.subtract(const Duration(hours: 25)),
+    );
+    await controller.checkForUpdates(manual: false);
+    expect(updateService.calls, 2);
+    expect(controller.lastUpdateCheckAt, now);
   });
 }

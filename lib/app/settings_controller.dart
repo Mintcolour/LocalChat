@@ -16,6 +16,8 @@ const _notificationsEnabledKey = 'notifications_enabled';
 const _notificationPreviewEnabledKey = 'notification_preview_enabled';
 const _keepAliveEnabledKey = 'android_keep_alive_enabled';
 const _storageRootPathKey = 'storage_root_path';
+const _dailyUpdateCheckEnabledKey = 'daily_update_check_enabled';
+const _lastUpdateCheckAtKey = 'last_update_check_at';
 
 /// 设置子控制器：负责语言、外观、自动复制、托盘、开机自启偏好的持久化与原生同步。
 ///
@@ -37,9 +39,11 @@ class SettingsController extends ChangeNotifier {
   bool notificationsEnabled = true;
   bool notificationPreviewEnabled = false;
   bool keepAliveEnabled = Platform.isAndroid;
+  bool dailyUpdateCheckEnabled = false;
   String languageCode = 'zh';
   String themeModeCode = 'system';
   String? storageRootPath;
+  DateTime? lastUpdateCheckAt;
 
   /// 从数据库与原生状态载入设置。
   Future<void> load() async {
@@ -65,6 +69,12 @@ class SettingsController extends ChangeNotifier {
     storageRootPath = cleanStorageRoot == null || cleanStorageRoot.isEmpty
         ? null
         : cleanStorageRoot;
+    dailyUpdateCheckEnabled =
+        await db.getSetting(_dailyUpdateCheckEnabledKey) == 'true';
+    final storedLastUpdateCheck = await db.getSetting(_lastUpdateCheckAtKey);
+    lastUpdateCheckAt = storedLastUpdateCheck == null
+        ? null
+        : DateTime.tryParse(storedLastUpdateCheck);
     await _loadWindowPreferences();
   }
 
@@ -101,6 +111,17 @@ class SettingsController extends ChangeNotifier {
   Future<void> setKeepAliveEnabled(bool value) async {
     keepAliveEnabled = value;
     await db.setSetting(_keepAliveEnabledKey, value ? 'true' : 'false');
+  }
+
+  Future<void> setDailyUpdateCheckEnabled(bool value) async {
+    dailyUpdateCheckEnabled = value;
+    await db.setSetting(_dailyUpdateCheckEnabledKey, value ? 'true' : 'false');
+  }
+
+  Future<void> setLastUpdateCheckAt(DateTime value) async {
+    final normalized = value.toUtc();
+    lastUpdateCheckAt = normalized;
+    await db.setSetting(_lastUpdateCheckAtKey, normalized.toIso8601String());
   }
 
   Future<void> setStorageRootPath(String value) async {

@@ -2,6 +2,20 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.4 - 2026-06-27
+
+### 中文
+
+- 新增“关于 LocalChat”页面，集中展示版本号、作者、开源社区地址、发布页、问题反馈入口和开源协议。
+- 新增 GitHub Releases 检查更新功能，支持手动检查，并可选择开启每日自动检查。
+- 新增 MIT 开源协议文件，并在应用内提供第三方开源许可入口。
+
+### English
+
+- Added an About LocalChat page with version, author, open-source community, releases, issue tracker, and license details.
+- Added GitHub Releases update checks, with manual checks and an optional daily automatic check.
+- Added the MIT license file and an in-app entry for third-party open-source licenses.
+
 ## 1.3.3 - 2026-06-24
 
 ### 中文

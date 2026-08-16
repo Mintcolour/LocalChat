@@ -81,21 +81,21 @@ void main() {
     final portA = await transportA.start();
     final portB = await transportB.start();
     Device deviceOf(LocalIdentity local, int port) => Device(
-          id: local.deviceId,
-          displayName: local.displayName,
-          platform: local.platform,
-          host: '127.0.0.1',
-          port: port,
-          signingPublicKey: local.signingPublicKey,
-          exchangePublicKey: local.exchangePublicKey,
-          fingerprint: local.fingerprint,
-          avatarSeed: local.avatarSeed,
-          avatarColor: local.avatarColor,
-          trusted: true,
-          endpointSource: 'auto',
-          lastSeen: DateTime.now(),
-          createdAt: DateTime.now(),
-        );
+      id: local.deviceId,
+      displayName: local.displayName,
+      platform: local.platform,
+      host: '127.0.0.1',
+      port: port,
+      signingPublicKey: local.signingPublicKey,
+      exchangePublicKey: local.exchangePublicKey,
+      fingerprint: local.fingerprint,
+      avatarSeed: local.avatarSeed,
+      avatarColor: local.avatarColor,
+      trusted: true,
+      endpointSource: 'auto',
+      lastSeen: DateTime.now(),
+      createdAt: DateTime.now(),
+    );
     peerA = deviceOf(localA, portA);
     peerB = deviceOf(localB, portB);
     for (final entry in {dbA: peerB, dbB: peerA}.entries) {
@@ -146,7 +146,9 @@ void main() {
     final temp = File('${rootB.path}${Platform.pathSeparator}resume-t1.tmp');
     await temp.writeAsBytes(payload.sublist(0, chunkSize));
     final now = DateTime.now();
-    await dbB.into(dbB.transfers).insert(
+    await dbB
+        .into(dbB.transfers)
+        .insert(
           TransfersCompanion.insert(
             id: 'resume-t1',
             peerDeviceId: peerA.id,
@@ -159,11 +161,9 @@ void main() {
             updatedAt: now,
           ),
         );
-    await (dbB.update(
-      dbB.transfers,
-    )..where((tbl) => tbl.id.equals('resume-t1'))).write(
-      TransfersCompanion(receivedBytes: Value(chunkSize)),
-    );
+    await (dbB.update(dbB.transfers)
+          ..where((tbl) => tbl.id.equals('resume-t1')))
+        .write(TransfersCompanion(receivedBytes: Value(chunkSize)));
 
     // 同 id 重新 start：应回报 resume_offset = 已收 4MB，且不新增消息。
     final start = await postSecure('/v1/transfers', {

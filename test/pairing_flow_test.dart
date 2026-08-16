@@ -180,9 +180,6 @@ void main() {
     expect(retriedMessage.status, 'sent');
     // 重试复用原 transferId，使接收端可凭同 id 断点续传。
     expect(retriedMessage.transferId, 'failed-transfer');
-    expect(
-      await dbA.listTransfersByIds(['failed-transfer']),
-      isNotEmpty,
-    );
+    expect(await dbA.listTransfersByIds(['failed-transfer']), isNotEmpty);
   });
 }

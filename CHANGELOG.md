@@ -2,6 +2,26 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.6 - 2026-08-17
+
+### 中文
+
+- 新增大文件分块断点续传：失败的传输在重试时从接收端已收到的分块继续，不再整文件重传；对旧版本设备自动回退整传。
+- 配对校验码改为由双方设备密钥指纹共同派生，接收方需输入与对方屏幕显示一致的校验码才能允许配对，可防范局域网中间人配对攻击；对旧版本设备回退原流程。
+- 修复加密信封防重放缓存可被无效签名的请求污染、进而重放有效消息的问题。
+- 新增 GitHub Actions CI：推送与 Pull Request 自动执行格式校验、静态分析与全部测试。
+- 收紧静态分析规则、排除生成代码并统一代码格式；将主界面与对话框等巨型源码文件按职责拆分为多个模块，行为不变。
+- 修正 Android 应用名大小写显示为 LocalChat。
+
+### English
+
+- Added resumable chunked transfers for large files: failed transfers retry from the chunks the receiver already has instead of restarting from scratch; peers on older versions fall back to full re-transfer.
+- Pairing codes are now derived from both devices' key fingerprints, and the receiver must enter the code shown on the other device before pairing is allowed, defeating man-in-the-middle pairing on the LAN; older peers fall back to the previous flow.
+- Fixed the anti-replay nonce cache being polluted by requests with invalid signatures, which could have allowed replaying captured messages.
+- Added GitHub Actions CI running format checks, static analysis, and the full test suite on pushes and pull requests.
+- Tightened static analysis rules, excluded generated code, unified formatting, and split the oversized UI and dialog source files into focused modules with no behavior change.
+- Fixed the Android app label casing to display as LocalChat.
+
 ## 1.3.5 - 2026-07-03
 
 ### 中文

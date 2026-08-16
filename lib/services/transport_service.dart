@@ -22,18 +22,13 @@ import '../models/notification_event.dart';
 import '../models/protocol.dart';
 import '../models/transfer_views.dart';
 import 'file_store.dart';
+import 'transport/frame_codec.dart';
+import 'transport/outbound_task.dart';
 import 'identity_service.dart';
 import 'security_service.dart';
 
-const _streamFrameMagic = 0x4C434632; // LCF2
-const _streamFrameHeaderLength = 24;
 const _progressPersistInterval = Duration(milliseconds: 300);
 const _speedSampleInterval = Duration(milliseconds: 500);
-
-/// 出站传输被用户取消时抛出，用于在传输链路中中断流生成与 dio 请求。
-class _OutboundCancelled implements Exception {
-  const _OutboundCancelled();
-}
 
 class TransportService {
   TransportService(
@@ -65,13 +60,13 @@ class TransportService {
   final Map<String, DateTime> _lastProgressPersistedAt = {};
   final Map<String, int> _lastProgressBytes = {};
   // 出站单活动任务队列：同一时刻只跑一个出站传输，其余排队等待。
-  final List<_OutboundTask> _outboundQueue = [];
-  _OutboundTask? _activeOutbound;
+  final List<OutboundTask> _outboundQueue = [];
+  OutboundTask? _activeOutbound;
   bool _pumping = false;
   // 实时传输统计（发送字节数与瞬时速度），仅存内存，避免高频写库。
-  final Map<String, _LiveTransferStat> _liveStats = {};
+  final Map<String, LiveTransferStat> _liveStats = {};
   // 正在接收的入站传输取消信号：transferId → 取消标志，供对端 cancel 接口触发。
-  final Map<String, _InboundCancel> _inboundCancels = {};
+  final Map<String, InboundCancel> _inboundCancels = {};
   HttpServer? _server;
   int _port = 0;
   Future<Device?> Function(String deviceId)? reconnectPeer;
@@ -759,9 +754,9 @@ class TransportService {
       )..where((tbl) => tbl.id.equals(transfer.id))).go();
     });
     final completion = Completer<void>();
-    _liveStats[retryTransferId] = _LiveTransferStat(totalBytes: length);
+    _liveStats[retryTransferId] = LiveTransferStat(totalBytes: length);
     _outboundQueue.add(
-      _OutboundTask(
+      OutboundTask(
         transferId: retryTransferId,
         peerId: currentPeer.id,
         file: file,
@@ -867,9 +862,9 @@ class TransportService {
         createdAt: DateTime.now(),
       ),
     );
-    _liveStats[transferId] = _LiveTransferStat(totalBytes: length);
+    _liveStats[transferId] = LiveTransferStat(totalBytes: length);
     _outboundQueue.add(
-      _OutboundTask(
+      OutboundTask(
         transferId: transferId,
         peerId: currentPeer.id,
         file: file,
@@ -904,10 +899,10 @@ class TransportService {
     }
   }
 
-  Future<void> _runOutboundTask(_OutboundTask task) async {
+  Future<void> _runOutboundTask(OutboundTask task) async {
     if (task.canceled) {
       await _markTransferStatus(task.transferId, 'canceled', 0);
-      task.completeError(const _OutboundCancelled());
+      task.completeError(const OutboundCancelled());
       return;
     }
     final stored = await _db.getDevice(task.peerId);
@@ -939,9 +934,9 @@ class TransportService {
       );
       await _markTransferStatus(task.transferId, 'sent', task.length);
       task.complete();
-    } on _OutboundCancelled {
+    } on OutboundCancelled {
       await _markTransferStatus(task.transferId, 'canceled', 0);
-      task.completeError(const _OutboundCancelled());
+      task.completeError(const OutboundCancelled());
     } catch (error) {
       final code = error is AppFailure
           ? error.code
@@ -1019,7 +1014,7 @@ class TransportService {
     String? mimeType,
     int totalChunks, {
     String? relativePath,
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     try {
       var targetPeer = peer;
@@ -1036,13 +1031,13 @@ class TransportService {
           task: task,
         );
       } catch (error) {
-        if (task?.canceled == true) throw const _OutboundCancelled();
+        if (task?.canceled == true) throw const OutboundCancelled();
         if (!_isConnectionError(error)) rethrow;
         await _db.markDeviceOffline(targetPeer.id);
         _updates.add(null);
         final resolved = await reconnectPeer?.call(targetPeer.id);
         if (resolved == null) rethrow;
-        if (task?.canceled == true) throw const _OutboundCancelled();
+        if (task?.canceled == true) throw const OutboundCancelled();
         targetPeer = resolved;
         await _markTransferProgress(transferId, 0, force: true, task: task);
         await _sendFileAttempt(
@@ -1073,9 +1068,9 @@ class TransportService {
     String? mimeType,
     int totalChunks, {
     String? relativePath,
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
-    if (task?.canceled == true) throw const _OutboundCancelled();
+    if (task?.canceled == true) throw const OutboundCancelled();
     final startBody = <String, Object?>{
       'id': transferId,
       'file_name': name,
@@ -1089,7 +1084,7 @@ class TransportService {
       startBody['relative_path'] = relativePath;
     }
     await _postSecure(peer, '/v1/transfers', startBody, task: task);
-    if (task?.canceled == true) throw const _OutboundCancelled();
+    if (task?.canceled == true) throw const OutboundCancelled();
     final freshPeer = await _freshPeer(peer);
     final usedStream = await _trySendEncryptedStream(
       freshPeer,
@@ -1097,11 +1092,11 @@ class TransportService {
       transferId,
       task: task,
     );
-    if (task?.canceled == true) throw const _OutboundCancelled();
+    if (task?.canceled == true) throw const OutboundCancelled();
     if (!usedStream) {
       await _sendLegacyChunks(freshPeer, file, transferId, length, task: task);
     }
-    if (task?.canceled == true) throw const _OutboundCancelled();
+    if (task?.canceled == true) throw const OutboundCancelled();
     final sha = await _sha256File(file);
     await (_db.update(
       _db.transfers,
@@ -1118,7 +1113,7 @@ class TransportService {
     Device peer,
     File file,
     String transferId, {
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
@@ -1146,7 +1141,7 @@ class TransportService {
       return true;
     } on dio.DioException catch (error) {
       if (task?.canceled == true || error.type == dio.DioExceptionType.cancel) {
-        throw const _OutboundCancelled();
+        throw const OutboundCancelled();
       }
       final status = error.response?.statusCode;
       if (status == 404 || status == 405 || status == 415 || status == 501) {
@@ -1160,7 +1155,7 @@ class TransportService {
     Device peer,
     File file,
     String transferId, {
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async* {
     final length = await file.length();
     var buffer = BytesBuilder(copy: false);
@@ -1184,7 +1179,7 @@ class TransportService {
           index,
           chunk,
         );
-        yield _encodeFrame(encrypted);
+        yield encodeFrame(encrypted);
         index++;
         sent += chunk.length;
         await _markTransferProgress(
@@ -1202,7 +1197,7 @@ class TransportService {
         index,
         tail,
       );
-      yield _encodeFrame(encrypted);
+      yield encodeFrame(encrypted);
       sent += tail.length;
       await _markTransferProgress(
         transferId,
@@ -1218,17 +1213,17 @@ class TransportService {
     File file,
     String transferId,
     int length, {
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     final stream = file.openRead();
     var buffer = BytesBuilder(copy: false);
     var index = 0;
     var sent = 0;
     await for (final part in stream) {
-      if (task?.canceled == true) throw const _OutboundCancelled();
+      if (task?.canceled == true) throw const OutboundCancelled();
       buffer.add(part);
       while (buffer.length >= legacyTransferChunkSize) {
-        if (task?.canceled == true) throw const _OutboundCancelled();
+        if (task?.canceled == true) throw const OutboundCancelled();
         final chunk = buffer.takeBytes();
         await _sendChunk(
           peer,
@@ -1268,7 +1263,7 @@ class TransportService {
     String transferId,
     int index,
     List<int> bytes, {
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     await _postSecure(
       peer,
@@ -1282,23 +1277,6 @@ class TransportService {
       method: 'put',
       task: task,
     );
-  }
-
-  Uint8List _encodeFrame(EncryptedFileChunk chunk) {
-    final output = BytesBuilder(copy: false);
-    final header = ByteData(_streamFrameHeaderLength)
-      ..setUint32(0, _streamFrameMagic)
-      ..setUint32(4, chunk.index)
-      ..setUint32(8, chunk.plainLength)
-      ..setUint32(12, chunk.nonce.length)
-      ..setUint32(16, chunk.mac.length)
-      ..setUint32(20, chunk.cipherText.length);
-    output
-      ..add(header.buffer.asUint8List())
-      ..add(chunk.nonce)
-      ..add(chunk.mac)
-      ..add(chunk.cipherText);
-    return output.takeBytes();
   }
 
   Future<Response> _receiveMessage(
@@ -1474,22 +1452,22 @@ class TransportService {
     if (transfer == null || transfer.filePath == null) {
       return Response.notFound('Transfer not found');
     }
-    final reader = _FrameReader(request.read());
+    final reader = FrameReader(request.read());
     final file = File(transfer.filePath!);
     final sink = file.openWrite(mode: FileMode.write);
-    final cancel = _inboundCancels[id] = _InboundCancel();
+    final cancel = _inboundCancels[id] = InboundCancel();
     var expectedIndex = 0;
     var received = 0;
     try {
       while (true) {
         if (cancel.canceled) {
-          throw const _OutboundCancelled();
+          throw const OutboundCancelled();
         }
         final frame = await reader.next();
         // cancel 请求可能在等待下一帧时到达；流关闭后仍需再次检查标志，
         // 否则 EOF 会被当成正常结束并留下 receiving 记录。
         if (cancel.canceled) {
-          throw const _OutboundCancelled();
+          throw const OutboundCancelled();
         }
         if (frame == null) break;
         if (frame.index != expectedIndex) {
@@ -1505,7 +1483,7 @@ class TransportService {
         await _markTransferProgress(id, received);
       }
       await sink.close();
-    } on _OutboundCancelled {
+    } on OutboundCancelled {
       await sink.close();
       await _abortInboundTransfer(id, received);
       return _json({'ok': true, 'canceled': true});
@@ -1667,13 +1645,13 @@ class TransportService {
     String path,
     Map<String, Object?> payload, {
     String method = 'post',
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     final current = await _freshPeer(peer);
     try {
       await _postSecureOnce(current, path, payload, method: method, task: task);
     } catch (error) {
-      if (task?.canceled == true) throw const _OutboundCancelled();
+      if (task?.canceled == true) throw const OutboundCancelled();
       if (!_isConnectionError(error)) {
         rethrow;
       }
@@ -1683,7 +1661,7 @@ class TransportService {
       if (resolved == null) {
         rethrow;
       }
-      if (task?.canceled == true) throw const _OutboundCancelled();
+      if (task?.canceled == true) throw const OutboundCancelled();
       await _postSecureOnce(
         resolved,
         path,
@@ -1699,7 +1677,7 @@ class TransportService {
     String path,
     Map<String, Object?> payload, {
     String method = 'post',
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
@@ -1717,7 +1695,7 @@ class TransportService {
       }
     } on dio.DioException catch (error) {
       if (task?.canceled == true || error.type == dio.DioExceptionType.cancel) {
-        throw const _OutboundCancelled();
+        throw const OutboundCancelled();
       }
       rethrow;
     }
@@ -1945,7 +1923,7 @@ class TransportService {
     String id,
     int receivedBytes, {
     bool force = false,
-    _OutboundTask? task,
+    OutboundTask? task,
   }) async {
     final now = DateTime.now();
     // 实时统计：更新内存速度（发送字节数与瞬时速率），供传输中心展示。
@@ -2025,127 +2003,3 @@ class TransportService {
 }
 
 /// 一个排队或正在执行的单文件出站传输任务。
-class _OutboundTask {
-  _OutboundTask({
-    required this.transferId,
-    required this.peerId,
-    required this.file,
-    required this.name,
-    required this.length,
-    required this.mimeType,
-    required this.totalChunks,
-    required this.groupId,
-    this.relativePath,
-    this.completion,
-  });
-
-  final String transferId;
-  final String peerId;
-  final File file;
-  final String name;
-  final int length;
-  final String? mimeType;
-  final int totalChunks;
-  final String groupId;
-  final String? relativePath;
-  final Completer<void>? completion;
-
-  /// 运行期取消控制：dio 请求取消令牌 + 流生成中断标志。
-  final dio.CancelToken cancelToken = dio.CancelToken();
-  bool canceled = false;
-
-  void complete() {
-    final value = completion;
-    if (value != null && !value.isCompleted) value.complete();
-  }
-
-  void completeError(Object error) {
-    final value = completion;
-    if (value != null && !value.isCompleted) value.completeError(error);
-  }
-}
-
-/// 传输实时统计（内存态）：发送字节数 + 瞬时速度。
-class _LiveTransferStat {
-  _LiveTransferStat({required this.totalBytes});
-  final int totalBytes;
-  int sentBytes = 0;
-  double bytesPerSecond = 0;
-  DateTime? lastSampleAt;
-  int lastSampledBytes = 0;
-}
-
-/// 入站接收取消信号：被对端 cancel 接口触发后中断流读取循环。
-class _InboundCancel {
-  bool canceled = false;
-}
-
-class _FrameReader {
-  _FrameReader(Stream<List<int>> stream) : _iterator = StreamIterator(stream);
-
-  final StreamIterator<List<int>> _iterator;
-  Uint8List _buffer = Uint8List(0);
-  int _offset = 0;
-  var _done = false;
-
-  Future<EncryptedFileChunk?> next() async {
-    final header = await _readExact(_streamFrameHeaderLength);
-    if (header == null) return null;
-    final data = ByteData.sublistView(header);
-    if (data.getUint32(0) != _streamFrameMagic) {
-      throw const FormatException('Invalid stream frame magic.');
-    }
-    final index = data.getUint32(4);
-    final plainLength = data.getUint32(8);
-    final nonceLength = data.getUint32(12);
-    final macLength = data.getUint32(16);
-    final cipherLength = data.getUint32(20);
-    final nonce = await _readRequired(nonceLength);
-    final mac = await _readRequired(macLength);
-    final cipherText = await _readRequired(cipherLength);
-    return EncryptedFileChunk(
-      index: index,
-      plainLength: plainLength,
-      nonce: nonce,
-      mac: mac,
-      cipherText: cipherText,
-    );
-  }
-
-  Future<Uint8List> _readRequired(int length) async {
-    final bytes = await _readExact(length);
-    if (bytes == null) {
-      throw const FormatException('Unexpected end of stream.');
-    }
-    return bytes;
-  }
-
-  Future<Uint8List?> _readExact(int length) async {
-    final output = BytesBuilder(copy: false);
-    while (output.length < length) {
-      final available = _buffer.length - _offset;
-      if (available > 0) {
-        final needed = length - output.length;
-        final take = available < needed ? available : needed;
-        output.add(Uint8List.sublistView(_buffer, _offset, _offset + take));
-        _offset += take;
-        if (_offset == _buffer.length) {
-          _buffer = Uint8List(0);
-          _offset = 0;
-        }
-      } else {
-        if (_done) {
-          if (output.length == 0) return null;
-          throw const FormatException('Unexpected partial stream frame.');
-        }
-        if (await _iterator.moveNext()) {
-          _buffer = Uint8List.fromList(_iterator.current);
-          _offset = 0;
-        } else {
-          _done = true;
-        }
-      }
-    }
-    return output.takeBytes();
-  }
-}

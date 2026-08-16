@@ -84,10 +84,6 @@ class SecurityService {
         'Envelope timestamp is outside the allowed window.',
       );
     }
-    final nonceKey = '${peer.id}:${envelope.nonce}';
-    if (!_seenNonces.register(nonceKey)) {
-      throw const FormatException('Envelope nonce was already used.');
-    }
     final publicKey = SimplePublicKey(
       unb64(peer.signingPublicKey),
       type: KeyPairType.ed25519,
@@ -97,6 +93,12 @@ class SecurityService {
       signature: Signature(unb64(envelope.signature), publicKey: publicKey),
     );
     if (!ok) throw const FormatException('Envelope signature is invalid.');
+    // 必须先验签再登记 nonce：无效签名的信封若先占用缓存槽位，攻击者可灌满
+    // 缓存淘汰已登记 nonce，使截获的有效信封在时间窗内重放成功。
+    final nonceKey = '${peer.id}:${envelope.nonce}';
+    if (!_seenNonces.register(nonceKey)) {
+      throw const FormatException('Envelope nonce was already used.');
+    }
     final clear = await _cipher.decrypt(
       SecretBox(
         unb64(envelope.cipherText),
@@ -181,10 +183,6 @@ class SecurityService {
         'Stream timestamp is outside the allowed window.',
       );
     }
-    final nonceKey = 'stream:${peer.id}:$nonce';
-    if (!_seenNonces.register(nonceKey)) {
-      throw const FormatException('Stream nonce was already used.');
-    }
     final publicKey = SimplePublicKey(
       unb64(peer.signingPublicKey),
       type: KeyPairType.ed25519,
@@ -205,6 +203,11 @@ class SecurityService {
     );
     if (!ok) {
       throw const FormatException('Stream signature is invalid.');
+    }
+    // 与 open() 相同：先验签再登记，无效请求不得污染 nonce 缓存。
+    final nonceKey = 'stream:${peer.id}:$nonce';
+    if (!_seenNonces.register(nonceKey)) {
+      throw const FormatException('Stream nonce was already used.');
     }
   }
 

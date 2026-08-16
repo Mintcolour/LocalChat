@@ -712,46 +712,37 @@ class TransportService {
     final currentPeer = await _freshPeer(peer);
     _requireIdentityUnchanged(currentPeer);
     final length = await file.length();
-    final retryTransferId = _uuid.v4();
+    // 复用原 transferId：接收端凭同 id 匹配保留的临时文件实现断点续传，
+    // 对端为旧版本时仅等价于按同 id 从头重传。
+    final retryTransferId = transfer.id;
     final totalChunks = length == 0
         ? 1
         : (length + encryptedStreamChunkSize - 1) ~/ encryptedStreamChunkSize;
     final name = transfer.fileName;
     final mimeType = transfer.mimeType ?? lookupMimeType(path);
-    final groupId = _uuid.v4();
     await _db.transaction(() async {
-      await _db
-          .into(_db.transfers)
-          .insert(
-            TransfersCompanion.insert(
-              id: retryTransferId,
-              peerDeviceId: currentPeer.id,
-              direction: 'out',
-              fileName: name,
-              fileSize: length,
-              filePath: Value(path),
-              mimeType: Value(mimeType),
-              status: 'queued',
-              totalChunks: Value(totalChunks),
-              relativePath: Value(transfer.relativePath),
-              groupId: Value(groupId),
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
-            ),
-          );
+      await (_db.update(
+        _db.transfers,
+      )..where((tbl) => tbl.id.equals(transfer.id))).write(
+        TransfersCompanion(
+          status: const Value('queued'),
+          errorCode: const Value(null),
+          fileSize: Value(length),
+          filePath: Value(path),
+          mimeType: Value(mimeType),
+          totalChunks: Value(totalChunks),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
       await (_db.update(
         _db.chatMessages,
       )..where((tbl) => tbl.id.equals(message.id))).write(
         ChatMessagesCompanion(
           status: const Value('queued'),
-          transferId: Value(retryTransferId),
           filePath: Value(path),
           fileSize: Value(length),
         ),
       );
-      await (_db.delete(
-        _db.transfers,
-      )..where((tbl) => tbl.id.equals(transfer.id))).go();
     });
     final completion = Completer<void>();
     _liveStats[retryTransferId] = LiveTransferStat(totalBytes: length);
@@ -764,7 +755,7 @@ class TransportService {
         length: length,
         mimeType: mimeType,
         totalChunks: totalChunks,
-        groupId: groupId,
+        groupId: transfer.groupId ?? _uuid.v4(),
         relativePath: transfer.relativePath,
         completion: completion,
       ),
@@ -1083,13 +1074,32 @@ class TransportService {
     if (relativePath != null && relativePath.isNotEmpty) {
       startBody['relative_path'] = relativePath;
     }
-    await _postSecure(peer, '/v1/transfers', startBody, task: task);
+    final startResponse = await _postSecureExpect(
+      peer,
+      '/v1/transfers',
+      startBody,
+      task: task,
+    );
     if (task?.canceled == true) throw const OutboundCancelled();
+    // 断点续传：接收端支持 resume_v1 且回报了已收字节数时，从对应分块继续。
+    var resumeOffset = 0;
+    final capabilities = startResponse['capabilities'];
+    if (capabilities is List &&
+        capabilities.whereType<String>().contains(resumeCapability)) {
+      final reported = startResponse['resume_offset'];
+      if (reported is int &&
+          reported > 0 &&
+          reported <= length &&
+          (reported % encryptedStreamChunkSize == 0 || reported == length)) {
+        resumeOffset = reported;
+      }
+    }
     final freshPeer = await _freshPeer(peer);
     final usedStream = await _trySendEncryptedStream(
       freshPeer,
       file,
       transferId,
+      offset: resumeOffset,
       task: task,
     );
     if (task?.canceled == true) throw const OutboundCancelled();
@@ -1113,19 +1123,28 @@ class TransportService {
     Device peer,
     File file,
     String transferId, {
+    int offset = 0,
     OutboundTask? task,
   }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
+    final base =
+        'http://${peer.host}:${peer.port}/v1/transfers/$transferId/stream';
     final uri = Uri.parse(
-      'http://${peer.host}:${peer.port}/v1/transfers/$transferId/stream',
+      offset > 0 ? '$base?offset=$offset' : base,
     );
     final headers = await _securityService.streamAuthHeaders(peer, transferId);
     try {
       await _dio.postUri<void>(
         uri,
-        data: _encryptedFileStream(peer, file, transferId, task: task),
+        data: _encryptedFileStream(
+          peer,
+          file,
+          transferId,
+          startOffset: offset,
+          task: task,
+        ),
         cancelToken: task?.cancelToken,
         options: dio.Options(
           headers: headers,
@@ -1144,6 +1163,10 @@ class TransportService {
         throw const OutboundCancelled();
       }
       final status = error.response?.statusCode;
+      if (status == 409 && offset > 0) {
+        // 接收端拒绝该续传偏移（如临时文件已丢失）→ 放弃续传，从头重传。
+        return _trySendEncryptedStream(peer, file, transferId, task: task);
+      }
       if (status == 404 || status == 405 || status == 415 || status == 501) {
         return false;
       }
@@ -1155,13 +1178,14 @@ class TransportService {
     Device peer,
     File file,
     String transferId, {
+    int startOffset = 0,
     OutboundTask? task,
   }) async* {
     final length = await file.length();
     var buffer = BytesBuilder(copy: false);
-    var index = 0;
-    var sent = 0;
-    await for (final part in file.openRead()) {
+    var index = startOffset ~/ encryptedStreamChunkSize;
+    var sent = startOffset;
+    await for (final part in file.openRead(startOffset)) {
       if (task?.canceled == true) return;
       buffer.add(part);
       while (buffer.length >= encryptedStreamChunkSize) {
@@ -1341,16 +1365,44 @@ class TransportService {
         final conversation = await _db.ensureConversation(peer);
         final at = DateTime.now();
         final relativePath = _nullableString(payload['relative_path']);
-        final file = await _fileStore.createReceiveFile(
-          _string(payload['file_name'], 'received.bin'),
-          conversationFolder: FileStore.conversationFolder(
-            peer.displayName,
-            peer.id,
-          ),
-          at: at,
-          relativePath: relativePath,
-        );
         final id = _string(payload['id'], _uuid.v4());
+        final fileSize = _int(payload['file_size']);
+        // 断点续传：同 id 重试（retryFile 复用 id / 断线重连二次 start）且旧
+        // 临时文件仍保留时，复用该文件并回报已收字节数，发送方从对应分块继续。
+        var resumeOffset = 0;
+        File? resumeFile;
+        final existing = await (_db.select(
+          _db.transfers,
+        )..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
+        if (existing != null &&
+            existing.direction == 'in' &&
+            existing.peerDeviceId == peer.id &&
+            existing.fileSize == fileSize &&
+            (existing.status == 'failed' || existing.status == 'interrupted')) {
+          final received = existing.receivedBytes;
+          final aligned =
+              received > 0 &&
+              received <= fileSize &&
+              (received % encryptedStreamChunkSize == 0 || received == fileSize);
+          final tempPath = existing.filePath;
+          if (aligned && tempPath != null && await File(tempPath).exists()) {
+            if (await File(tempPath).length() == received) {
+              resumeOffset = received;
+              resumeFile = File(tempPath);
+            }
+          }
+        }
+        final file =
+            resumeFile ??
+            await _fileStore.createReceiveFile(
+              _string(payload['file_name'], 'received.bin'),
+              conversationFolder: FileStore.conversationFolder(
+                peer.displayName,
+                peer.id,
+              ),
+              at: at,
+              relativePath: relativePath,
+            );
         final fileName = _string(payload['file_name'], p.basename(file.path));
         await _db
             .into(_db.transfers)
@@ -1361,7 +1413,7 @@ class TransportService {
                 direction: 'in',
                 fileName: fileName,
                 filePath: Value(file.path),
-                fileSize: _int(payload['file_size']),
+                fileSize: fileSize,
                 sha256: Value(_nullableString(payload['sha256'])),
                 mimeType: Value(_nullableString(payload['mime_type'])),
                 status: 'receiving',
@@ -1371,43 +1423,59 @@ class TransportService {
                 updatedAt: at,
               ),
             );
-        await _db.addMessage(
-          ChatMessagesCompanion.insert(
-            id: _uuid.v4(),
-            conversationId: conversation.id,
-            peerDeviceId: peer.id,
-            direction: 'in',
-            kind: 'file',
-            fileName: Value(fileName),
-            filePath: Value(file.path),
-            fileSize: Value(_int(payload['file_size'])),
-            mimeType: Value(_nullableString(payload['mime_type'])),
-            status: 'receiving',
-            transferId: Value(id),
-            relativePath: Value(relativePath),
-            createdAt: DateTime.now(),
-          ),
-        );
-        final notificationText = languageCode == 'en'
-            ? relativePath != null
-                  ? 'Received ${peer.displayName}: $relativePath'
-                  : 'Received file from ${peer.displayName}: $fileName'
-            : relativePath != null
-            ? '收到 ${peer.displayName}：$relativePath'
-            : '收到 ${peer.displayName} 的文件：$fileName';
-        _notifications.add(notificationText);
-        _notificationEvents.add(
-          AppNotificationEvent(
-            type: AppNotificationType.file,
-            title: peer.displayName,
-            privateBody: languageCode == 'en' ? 'New LocalChat file' : '收到一个文件',
-            previewBody: relativePath ?? fileName,
-            deviceId: peer.id,
-            conversationId: conversation.id,
-          ),
-        );
+        if (resumeOffset == 0) {
+          // 未续传时必须清零，避免沿用旧进度（insertOnConflictUpdate 不覆盖
+          // 未提供的列），并按全新接收生成消息与通知。
+          await (_db.update(
+            _db.transfers,
+          )..where((tbl) => tbl.id.equals(id))).write(
+            const TransfersCompanion(receivedBytes: Value(0)),
+          );
+          await _db.addMessage(
+            ChatMessagesCompanion.insert(
+              id: _uuid.v4(),
+              conversationId: conversation.id,
+              peerDeviceId: peer.id,
+              direction: 'in',
+              kind: 'file',
+              fileName: Value(fileName),
+              filePath: Value(file.path),
+              fileSize: Value(fileSize),
+              mimeType: Value(_nullableString(payload['mime_type'])),
+              status: 'receiving',
+              transferId: Value(id),
+              relativePath: Value(relativePath),
+              createdAt: DateTime.now(),
+            ),
+          );
+          final notificationText = languageCode == 'en'
+              ? relativePath != null
+                    ? 'Received ${peer.displayName}: $relativePath'
+                    : 'Received file from ${peer.displayName}: $fileName'
+              : relativePath != null
+              ? '收到 ${peer.displayName}：$relativePath'
+              : '收到 ${peer.displayName} 的文件：$fileName';
+          _notifications.add(notificationText);
+          _notificationEvents.add(
+            AppNotificationEvent(
+              type: AppNotificationType.file,
+              title: peer.displayName,
+              privateBody: languageCode == 'en'
+                  ? 'New LocalChat file'
+                  : '收到一个文件',
+              previewBody: relativePath ?? fileName,
+              deviceId: peer.id,
+              conversationId: conversation.id,
+            ),
+          );
+        }
         _updates.add(null);
-        return _json({'ok': true, 'path': file.path});
+        return _json({
+          'ok': true,
+          'path': file.path,
+          if (resumeOffset > 0) 'resume_offset': resumeOffset,
+          'capabilities': const [resumeCapability],
+        });
       });
 
   Future<Response> _receiveTransferStream(Request request, String id) async {
@@ -1452,12 +1520,36 @@ class TransportService {
     if (transfer == null || transfer.filePath == null) {
       return Response.notFound('Transfer not found');
     }
+    // 断点续传：offset 为临时文件中已收到的明文字节数，必须对齐分块边界且
+    // 与临时文件实际长度一致，之后以追加模式续写、帧序号从对应分块继续。
+    var offset = 0;
+    final offsetParam = int.tryParse(
+      request.url.queryParameters['offset'] ?? '',
+    );
+    if (offsetParam != null && offsetParam != 0) {
+      final aligned =
+          offsetParam > 0 &&
+          offsetParam <= transfer.fileSize &&
+          (offsetParam % encryptedStreamChunkSize == 0 ||
+              offsetParam == transfer.fileSize);
+      final temp = File(transfer.filePath!);
+      final tempLength = await temp.exists() ? await temp.length() : -1;
+      if (!aligned || tempLength != offsetParam) {
+        return Response(409, body: 'Invalid resume offset');
+      }
+      offset = offsetParam;
+    }
     final reader = FrameReader(request.read());
     final file = File(transfer.filePath!);
-    final sink = file.openWrite(mode: FileMode.write);
+    final sink = file.openWrite(
+      mode: offset > 0 ? FileMode.append : FileMode.write,
+    );
     final cancel = _inboundCancels[id] = InboundCancel();
-    var expectedIndex = 0;
-    var received = 0;
+    var expectedIndex = offset ~/ encryptedStreamChunkSize;
+    var received = offset;
+    if (offset > 0) {
+      await _markTransferProgress(id, offset);
+    }
     try {
       while (true) {
         if (cancel.canceled) {
@@ -1710,8 +1802,9 @@ class TransportService {
   Future<Map<String, Object?>> _postSecureExpect(
     Device peer,
     String path,
-    Map<String, Object?> payload,
-  ) async {
+    Map<String, Object?> payload, {
+    OutboundTask? task,
+  }) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
@@ -1723,6 +1816,7 @@ class TransportService {
     final response = await _dio.postUri<Map<String, dynamic>>(
       uri,
       data: envelope,
+      cancelToken: task?.cancelToken,
     );
     final data = response.data;
     if (data != null) return Map<String, Object?>.from(data);

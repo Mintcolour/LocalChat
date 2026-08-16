@@ -178,7 +178,11 @@ void main() {
       conversationA.id,
     )).singleWhere((message) => message.id == 'failed-message');
     expect(retriedMessage.status, 'sent');
-    expect(retriedMessage.transferId, isNot('failed-transfer'));
-    expect(await dbA.listTransfersByIds(['failed-transfer']), isEmpty);
+    // 重试复用原 transferId，使接收端可凭同 id 断点续传。
+    expect(retriedMessage.transferId, 'failed-transfer');
+    expect(
+      await dbA.listTransfersByIds(['failed-transfer']),
+      isNotEmpty,
+    );
   });
 }

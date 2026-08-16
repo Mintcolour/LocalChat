@@ -37,6 +37,11 @@ const transferCancelCapability = 'transfer_cancel_v1';
 // 输入比对后才允许配对。旧版本不携带此能力，接收方回退为展示明文配对码、
 // 点按允许的流程。
 const pairSasCapability = 'pair_sas_v2';
+// 断点续传能力：接收方在 /v1/transfers start 响应里携带此能力并回报
+// resume_offset（临时文件中已收到的明文字节数）时，发送方以
+// /v1/transfers/{id}/stream?offset=N 从对应分块继续上传，接收端以追加模式
+// 续写同一临时文件。旧版本发送方忽略该响应字段、从头重传。
+const resumeCapability = 'resume_v1';
 
 enum PeerPresence { trusted, discovered }
 

@@ -8,11 +8,7 @@ import 'package:flutter/foundation.dart';
 /// 包含原始异常）。本类型在阶段 A 引入，阶段 D 起在控制器层全面替换裸 `$error`。
 @immutable
 class AppFailure implements Exception {
-  const AppFailure({
-    required this.code,
-    required this.userMessage,
-    this.cause,
-  });
+  const AppFailure({required this.code, required this.userMessage, this.cause});
 
   /// 稳定错误码，用于测试断言与跨模块识别（如 `peer_identity_changed`）。
   final String code;
@@ -25,11 +21,7 @@ class AppFailure implements Exception {
 
   /// 把任意异常归一为 [AppFailure]。已知 [code] 时优先使用，否则按异常类型推断
   /// 一个保守的通用码，并把原始异常挂在 [cause] 上。
-  factory AppFailure.from(
-    Object error, {
-    String? userMessage,
-    String? code,
-  }) {
+  factory AppFailure.from(Object error, {String? userMessage, String? code}) {
     if (error is AppFailure) {
       return error;
     }

@@ -124,12 +124,10 @@ void main() {
     expect(find.text(controller.text.pairSasPrompt), findsOneWidget);
 
     FilledButton allowButton() => tester.widget<FilledButton>(
-          find.widgetWithText(FilledButton, controller.text.allow),
-        );
-    Finder codeField() => find.widgetWithText(
-          TextField,
-          controller.text.pairCodeInputHint,
-        );
+      find.widgetWithText(FilledButton, controller.text.allow),
+    );
+    Finder codeField() =>
+        find.widgetWithText(TextField, controller.text.pairCodeInputHint);
 
     // 未输入时允许按钮禁用。
     expect(allowButton().onPressed, isNull);

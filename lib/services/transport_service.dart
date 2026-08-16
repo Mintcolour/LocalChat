@@ -61,7 +61,7 @@ class TransportService {
   final _pairRequests = StreamController<PendingPairRequest>.broadcast();
   // 待审批的配对请求：审批完成器 + 该请求期望的 SAS 校验码（旧版发起方为 null）。
   final Map<String, ({Completer<bool> completer, String? sasCode})>
-      _pendingPairApprovals = {};
+  _pendingPairApprovals = {};
   final Map<String, DateTime> _lastProgressPersistedAt = {};
   final Map<String, int> _lastProgressBytes = {};
   // 出站单活动任务队列：同一时刻只跑一个出站传输，其余排队等待。

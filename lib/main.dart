@@ -999,7 +999,8 @@ class _PairRequestCardState extends State<_PairRequestCard> {
     // SAS 请求：展示码与待输入码都使用本地派生值，忽略明文传输的 code。
     final displayCode = request.sasCode ?? request.code;
     final requiresCodeEntry = request.sasCode != null;
-    final codeEntered = !requiresCodeEntry ||
+    final codeEntered =
+        !requiresCodeEntry ||
         _codeInputController.text.trim() == request.sasCode;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),

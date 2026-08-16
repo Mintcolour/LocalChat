@@ -68,10 +68,7 @@ String formatChatDateSeparator(DateTime value, {DateTime? now}) {
 }
 
 /// 消息中可点击链接的正则（http/https）。
-final linkRegExp = RegExp(
-  r'https?://[^\s<>()]+',
-  caseSensitive: false,
-);
+final linkRegExp = RegExp(r'https?://[^\s<>()]+', caseSensitive: false);
 
 /// 提取消息文本中的全部链接。
 List<String> extractLinks(String text) =>

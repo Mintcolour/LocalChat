@@ -8,21 +8,21 @@ import 'package:localchat/services/identity_service.dart';
 import 'package:localchat/services/security_service.dart';
 
 Device _peerDevice(LocalIdentity local) => Device(
-      id: local.deviceId,
-      displayName: local.displayName,
-      platform: local.platform,
-      host: '127.0.0.1',
-      port: 12345,
-      signingPublicKey: local.signingPublicKey,
-      exchangePublicKey: local.exchangePublicKey,
-      fingerprint: local.fingerprint,
-      avatarSeed: local.avatarSeed,
-      avatarColor: local.avatarColor,
-      trusted: true,
-      endpointSource: 'auto',
-      lastSeen: DateTime.now(),
-      createdAt: DateTime.now(),
-    );
+  id: local.deviceId,
+  displayName: local.displayName,
+  platform: local.platform,
+  host: '127.0.0.1',
+  port: 12345,
+  signingPublicKey: local.signingPublicKey,
+  exchangePublicKey: local.exchangePublicKey,
+  fingerprint: local.fingerprint,
+  avatarSeed: local.avatarSeed,
+  avatarColor: local.avatarColor,
+  trusted: true,
+  endpointSource: 'auto',
+  lastSeen: DateTime.now(),
+  createdAt: DateTime.now(),
+);
 
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
@@ -112,13 +112,13 @@ void main() {
     test('合法流鉴权头的重放仍被拒绝', () async {
       final headers = await securityA.streamAuthHeaders(peerB, 'transfer-2');
       Future<void> verify() => securityB.verifyStreamAuth(
-            peer: peerA,
-            recipientDeviceId: localB.deviceId,
-            transferId: 'transfer-2',
-            timestamp: int.parse(headers['x-localchat-timestamp']!),
-            nonce: headers['x-localchat-nonce']!,
-            signature: headers['x-localchat-signature']!,
-          );
+        peer: peerA,
+        recipientDeviceId: localB.deviceId,
+        transferId: 'transfer-2',
+        timestamp: int.parse(headers['x-localchat-timestamp']!),
+        nonce: headers['x-localchat-nonce']!,
+        signature: headers['x-localchat-signature']!,
+      );
       await verify();
       await expectLater(verify(), throwsA(isA<FormatException>()));
     });

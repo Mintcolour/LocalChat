@@ -12,7 +12,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <application
-        android:label="localchat"
+        android:label="LocalChat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <service

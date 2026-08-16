@@ -43,10 +43,7 @@ void main() {
     });
 
     test('expired entries are reaped before capacity eviction', () {
-      final cache = NonceCache(
-        ttl: const Duration(minutes: 1),
-        maxCapacity: 2,
-      );
+      final cache = NonceCache(ttl: const Duration(minutes: 1), maxCapacity: 2);
       final t0 = DateTime.utc(2026, 6, 22, 10);
       expect(cache.register('a', now: t0), isTrue);
       // b 在更晚时刻登记，a 此时已过期。

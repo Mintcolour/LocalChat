@@ -43,7 +43,10 @@ void main() {
     });
 
     final stopwatch = Stopwatch()..start();
-    final firstPage = await db.listMessagesPage(conversationId: 'peer:peer-1', limit: 50);
+    final firstPage = await db.listMessagesPage(
+      conversationId: 'peer:peer-1',
+      limit: 50,
+    );
     stopwatch.stop();
 
     expect(firstPage.length, 50);

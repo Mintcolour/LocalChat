@@ -30,8 +30,8 @@ void main() {
   });
 
   test('diagnostic advice explains campus network isolation', () {
-    final text = AppText('zh');
-    final result = NetworkDiagnosticResult(
+    const text = AppText('zh');
+    const result = NetworkDiagnosticResult(
       host: '172.30.72.176',
       port: 40123,
       status: NetworkDiagnosticStatus.timeout,

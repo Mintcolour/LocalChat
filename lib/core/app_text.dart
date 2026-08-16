@@ -475,4 +475,34 @@ class AppText {
             : '确认两台设备在同一网络后重试。如果在公共网络或企业局域网失败，大概率是当前网络环境禁止终端直接互访。';
     }
   }
+
+  // ---- 控制器状态文案（收敛自 AppController 的内联中英三元） ----
+  String get startupFailed => en ? 'Startup failed' : '启动失败';
+  String deletedChat(String title) =>
+      en ? 'Deleted chat $title' : '已删除会话 $title';
+  String get messageDeleted => en ? 'Message deleted' : '消息已删除';
+  String get appearanceUpdated =>
+      en ? 'Appearance updated' : '外观模式已更新';
+  String get autostartEnabledStatus =>
+      en ? 'Start on boot enabled' : '已开启开机自启';
+  String get deviceListRefreshed =>
+      en ? 'Device list refreshed' : '已刷新设备列表';
+  String get pairingFailed => en ? 'Pairing failed' : '配对失败';
+  String get addPeerFailed => en ? 'Add peer failed' : '添加好友失败';
+  String get sendingCancelled => en ? 'Sending cancelled' : '已取消发送';
+  String get retryingSend => en ? 'Retrying...' : '正在重试发送…';
+  String get retrySucceeded => en ? 'Retry succeeded' : '重新发送成功';
+  String get retryFailed => en ? 'Retry failed' : '重新发送失败';
+  String get saveFailed => en ? 'Save failed' : '保存失败';
+  String get renameFailed => en ? 'Rename failed' : '文件重命名失败';
+  String get chatHistoryCleared =>
+      en ? 'Chat history cleared' : '聊天记录已清空';
+  String get transferCanceledStatus =>
+      en ? 'Transfer canceled' : '已取消传输';
+  String get transferCancelFailed =>
+      en ? 'Transfer could not be canceled' : '无法取消该传输';
+  String get refreshFailed => en ? 'Refresh failed' : '刷新失败';
+  String get deviceFallbackName => en ? 'Device' : '设备';
+  String peerReconnected(String title) =>
+      en ? '$title reconnected' : '$title 已重新连接';
 }

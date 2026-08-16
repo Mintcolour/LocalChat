@@ -17,6 +17,7 @@ import '../models/network_diagnostic.dart';
 import '../models/network_health.dart';
 import '../models/notification_event.dart';
 import '../models/protocol.dart';
+import '../models/storage_migration.dart';
 import '../models/pending_attachment.dart';
 import '../models/quick_send_device.dart';
 import '../models/transfer_views.dart';
@@ -30,6 +31,7 @@ import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
 import '../services/diagnostic_log_service.dart';
 import '../services/file_store.dart';
+import '../services/storage_migration_service.dart';
 import '../services/identity_service.dart';
 import '../services/notification_service.dart';
 import '../services/secure_key_store.dart';
@@ -46,13 +48,6 @@ const _updateCheckOperationKey = 'updateCheck';
 const _networkHealthOperationKey = 'networkHealth';
 const _firewallRepairOperationKey = 'firewallRepair';
 const _dailyUpdateCheckInterval = Duration(hours: 24);
-
-class StorageMigrationResult {
-  const StorageMigrationResult({required this.moved, required this.skipped});
-
-  final int moved;
-  final int skipped;
-}
 
 class AppController extends ChangeNotifier {
   AppController({
@@ -95,6 +90,7 @@ class AppController extends ChangeNotifier {
     );
     discoveryService = DiscoveryService(db, identityService, logger: _logger);
     settings = SettingsController(db: db, windowService: windowService);
+    storageMigrationService = StorageMigrationService(db, this.fileStore);
   }
 
   final AppDatabase db;
@@ -117,6 +113,7 @@ class AppController extends ChangeNotifier {
   /// 设置子控制器：语言/外观/自动复制/托盘/开机自启。对外字段与方法通过下方 getter
   /// 与同名方法委托，UI 无需感知拆分（计划 P1 控制器拆分）。
   late final SettingsController settings;
+  late final StorageMigrationService storageMigrationService;
 
   LocalIdentity? identity;
   List<Device> devices = [];
@@ -347,7 +344,7 @@ class AppController extends ChangeNotifier {
     } catch (error, stackTrace) {
       _logger.error('app.initialize_failed', error, stackTrace);
       lastError = '$error';
-      status = languageCode == 'en' ? 'Startup failed' : '启动失败';
+      status = text.startupFailed;
       await discoveryService.stop();
       if (transportStarted) await transportService.stop();
     } finally {
@@ -741,7 +738,7 @@ class AppController extends ChangeNotifier {
     selectedDevice = null;
     messages = [];
     transfersById = {};
-    status = languageCode == 'en' ? 'Deleted chat $title' : '已删除会话 $title';
+    status = text.deletedChat(title);
     await refresh();
   }
 
@@ -787,7 +784,7 @@ class AppController extends ChangeNotifier {
 
     await db.deleteChatMessage(message.id);
     messages = messages.where((m) => m.id != message.id).toList();
-    status = languageCode == 'en' ? 'Message deleted' : '消息已删除';
+    status = text.messageDeleted;
     await refresh();
   }
 
@@ -802,7 +799,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> setThemeModeCode(String value) async {
     await settings.setThemeModeCode(value);
-    status = settings.languageCode == 'en' ? 'Appearance updated' : '外观模式已更新';
+    status = text.appearanceUpdated;
     notifyListeners();
   }
 
@@ -1001,7 +998,7 @@ class AppController extends ChangeNotifier {
 
       StorageMigrationResult? result;
       if (migrateIndexedFiles && !sameRoot) {
-        result = await _migrateIndexedStorageFiles(
+        result = await storageMigrationService.migrateIndexedFiles(
           oldRoot: oldRoot,
           newRoot: storageRootPath,
         );
@@ -1024,124 +1021,6 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<StorageMigrationResult> _migrateIndexedStorageFiles({
-    required String oldRoot,
-    required String newRoot,
-  }) async {
-    final transfers = await db.listReceivedTransfersForStorageMigration();
-    var movedCount = 0;
-    var skippedCount = 0;
-
-    for (final transfer in transfers) {
-      final sourcePath = transfer.savedPath ?? transfer.filePath;
-      if (sourcePath == null || sourcePath.isEmpty) continue;
-      if (!FileStore.isSameOrWithin(oldRoot, sourcePath)) continue;
-
-      final sourceType = await FileSystemEntity.type(
-        sourcePath,
-        followLinks: true,
-      );
-      if (sourceType != FileSystemEntityType.file) {
-        skippedCount++;
-        continue;
-      }
-
-      final relativePath = p.relative(sourcePath, from: oldRoot);
-      if (p.isAbsolute(relativePath) || relativePath.startsWith('..')) {
-        skippedCount++;
-        continue;
-      }
-
-      final targetDir = Directory(
-        p.normalize(p.join(newRoot, p.dirname(relativePath))),
-      );
-      try {
-        await targetDir.create(recursive: true);
-      } catch (_) {
-        skippedCount++;
-        continue;
-      }
-
-      final target = await fileStore.uniqueFileInDirectory(
-        targetDir,
-        p.basename(sourcePath),
-      );
-      final moved = await _moveStorageFile(File(sourcePath), target);
-      if (moved == null) {
-        skippedCount++;
-        continue;
-      }
-
-      final actualName = p.basename(moved.path);
-      final migratedRelativePath = transfer.relativePath == null
-          ? null
-          : FileStore.replaceRelativeFileName(
-              transfer.relativePath!,
-              actualName,
-            );
-      try {
-        await db.renameReceivedTransfer(
-          transferId: transfer.id,
-          fileName: actualName,
-          mimeType: transfer.mimeType,
-          savedPath: moved.path,
-          savedUri: null,
-          relativePath: migratedRelativePath,
-        );
-        movedCount++;
-      } catch (_) {
-        await _rollbackMovedStorageFile(moved.path, sourcePath);
-        skippedCount++;
-      }
-    }
-
-    await fileStore.deleteEmptyDirectoriesUnder(oldRoot);
-    return StorageMigrationResult(moved: movedCount, skipped: skippedCount);
-  }
-
-  Future<File?> _moveStorageFile(File source, File target) async {
-    try {
-      return await source.rename(target.path);
-    } on FileSystemException {
-      try {
-        final copied = await source.copy(target.path);
-        try {
-          await source.delete();
-        } catch (_) {
-          try {
-            if (await copied.exists()) await copied.delete();
-          } catch (_) {}
-          return null;
-        }
-        return copied;
-      } catch (_) {
-        try {
-          if (await target.exists()) await target.delete();
-        } catch (_) {}
-        return null;
-      }
-    }
-  }
-
-  Future<void> _rollbackMovedStorageFile(
-    String movedPath,
-    String originalPath,
-  ) async {
-    final moved = File(movedPath);
-    if (!await moved.exists() || await File(originalPath).exists()) return;
-    try {
-      await File(originalPath).parent.create(recursive: true);
-      try {
-        await moved.rename(originalPath);
-      } on FileSystemException {
-        await moved.copy(originalPath);
-        await moved.delete();
-      }
-    } catch (_) {
-      // Best effort: if rollback fails, the next refresh will still show status.
-    }
-  }
-
   Future<void> setTrayEnabled(bool value) async {
     await settings.setTrayEnabled(value);
     status = value
@@ -1157,7 +1036,7 @@ class AppController extends ChangeNotifier {
   Future<void> setAutostartEnabled(bool value) async {
     await settings.setAutostartEnabled(value);
     status = value
-        ? (settings.languageCode == 'en' ? 'Start on boot enabled' : '已开启开机自启')
+        ? text.autostartEnabledStatus
         : (settings.languageCode == 'en'
               ? 'Start on boot disabled'
               : '已关闭开机自启');
@@ -1195,7 +1074,7 @@ class AppController extends ChangeNotifier {
         DateTime.now().subtract(_staleDiscoveredDeviceAge),
       );
       await refresh();
-      status = languageCode == 'en' ? 'Device list refreshed' : '已刷新设备列表';
+      status = text.deviceListRefreshed;
     } catch (error, stackTrace) {
       _logger.error('discovery.rescan_failed', error, stackTrace);
       lastError = '$error';
@@ -1362,7 +1241,7 @@ class AppController extends ChangeNotifier {
           : '已信任 ${device.displayName}，之后可以像聊天一样直接发送';
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Pairing failed' : '配对失败';
+      status = text.pairingFailed;
     } finally {
       _endOperation('pair:${device.id}');
       notifyListeners();
@@ -1395,7 +1274,7 @@ class AppController extends ChangeNotifier {
       return device;
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Add peer failed' : '添加好友失败';
+      status = text.addPeerFailed;
       notifyListeners();
       return null;
     } finally {
@@ -1533,7 +1412,7 @@ class AppController extends ChangeNotifier {
     for (final item in items.where((item) => item.edited)) {
       await fileStore.deleteManagedEditedFile(item.path);
     }
-    status = languageCode == 'en' ? 'Sending cancelled' : '已取消发送';
+    status = text.sendingCancelled;
     notifyListeners();
   }
 
@@ -1905,7 +1784,7 @@ class AppController extends ChangeNotifier {
     }
     _beginOperation('retry:${message.id}');
     lastError = null;
-    status = languageCode == 'en' ? 'Retrying...' : '正在重试发送…';
+    status = text.retryingSend;
     notifyListeners();
     try {
       if (message.kind == 'file') {
@@ -1919,12 +1798,12 @@ class AppController extends ChangeNotifier {
       } else {
         await transportService.retryText(peer, message);
       }
-      status = languageCode == 'en' ? 'Retry succeeded' : '重新发送成功';
+      status = text.retrySucceeded;
     } catch (error) {
       lastError = '$error';
       status = error is AppFailure
           ? error.userMessage
-          : (languageCode == 'en' ? 'Retry failed' : '重新发送失败');
+          : text.retryFailed;
     } finally {
       await refresh();
       _endOperation('retry:${message.id}');
@@ -1966,7 +1845,7 @@ class AppController extends ChangeNotifier {
       await refresh();
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Save failed' : '保存失败';
+      status = text.saveFailed;
     } finally {
       _endOperation('save:$transferId');
       notifyListeners();
@@ -2041,7 +1920,7 @@ class AppController extends ChangeNotifier {
       return true;
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Rename failed' : '文件重命名失败';
+      status = text.renameFailed;
       return false;
     } finally {
       _endOperation('rename:$transferId');
@@ -2058,7 +1937,7 @@ class AppController extends ChangeNotifier {
     selectedDevice = null;
     selectedConversation = null;
     transfersById = {};
-    status = languageCode == 'en' ? 'Chat history cleared' : '聊天记录已清空';
+    status = text.chatHistoryCleared;
     await refresh();
   }
 
@@ -2091,7 +1970,7 @@ class AppController extends ChangeNotifier {
     }
     final localCanceled = await transportService.cancelOutbound(transfer.id);
     if (localCanceled) {
-      status = languageCode == 'en' ? 'Transfer canceled' : '已取消传输';
+      status = text.transferCanceledStatus;
       notifyListeners();
       return true;
     }
@@ -2107,8 +1986,8 @@ class AppController extends ChangeNotifier {
     }
     final ok = await transportService.requestRemoteCancel(peer, transfer.id);
     status = ok
-        ? (languageCode == 'en' ? 'Transfer canceled' : '已取消传输')
-        : (languageCode == 'en' ? 'Transfer could not be canceled' : '无法取消该传输');
+        ? text.transferCanceledStatus
+        : text.transferCancelFailed;
     notifyListeners();
     return ok;
   }
@@ -2221,7 +2100,7 @@ class AppController extends ChangeNotifier {
       await refresh();
     } catch (error) {
       lastError = '$error';
-      status = languageCode == 'en' ? 'Refresh failed' : '刷新失败';
+      status = text.refreshFailed;
       notifyListeners();
     }
   }
@@ -2230,7 +2109,7 @@ class AppController extends ChangeNotifier {
     final selectedTitle =
         selectedDevice?.id == deviceId && selectedDevice != null
         ? titleFor(selectedDevice!)
-        : (languageCode == 'en' ? 'Device' : '设备');
+        : text.deviceFallbackName;
     status = languageCode == 'en'
         ? '$selectedTitle disconnected, reconnecting...'
         : '$selectedTitle 连接断开，正在自动重连...';
@@ -2269,7 +2148,7 @@ class AppController extends ChangeNotifier {
           .first;
       final device = await db.getDevice(peer.deviceId);
       final title = device == null ? selectedTitle : titleFor(device);
-      status = languageCode == 'en' ? '$title reconnected' : '$title 已重新连接';
+      status = text.peerReconnected(title);
       notifyListeners();
       return device;
     } on TimeoutException {

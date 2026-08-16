@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -24,6 +23,7 @@ import '../models/transfer_views.dart';
 import '../models/chat_page.dart';
 import '../models/app_info.dart';
 import '../models/update_check.dart';
+import 'network_health_controller.dart';
 import 'settings_controller.dart';
 import '../services/android_keep_alive_service.dart';
 import '../services/app_info_service.dart';
@@ -90,6 +90,16 @@ class AppController extends ChangeNotifier {
     );
     discoveryService = DiscoveryService(db, identityService, logger: _logger);
     settings = SettingsController(db: db, windowService: windowService);
+    networkHealth = NetworkHealthController(
+      discoveryService: discoveryService,
+      windowsFirewallService: this.windowsFirewallService,
+      diagnosticLogService: diagnosticLogService,
+      readTransportPort: () => transportService.port,
+      readText: () => text,
+      readNow: _now,
+      log: _logger,
+      openDirectory: openFolder,
+    );
     storageMigrationService = StorageMigrationService(db, this.fileStore);
   }
 
@@ -190,10 +200,7 @@ class AppController extends ChangeNotifier {
   int notificationSerial = 0;
   AppInfo? appInfo;
   UpdateCheckResult? updateCheckResult;
-  DiscoveryHealth discoveryHealth = const DiscoveryHealth.notStarted();
-  WindowsFirewallStatus firewallStatus =
-      const WindowsFirewallStatus.unsupported();
-  NetworkHealthSnapshot? networkHealthSnapshot;
+  late final NetworkHealthController networkHealth;
   bool _appForeground = true;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
@@ -290,14 +297,18 @@ class AppController extends ChangeNotifier {
       transportStarted = true;
       _logger.info('transport.started', {'port': port});
       try {
-        discoveryHealth = await discoveryService.start(listenPort: port);
+        networkHealth.applyDiscoveryHealth(
+          await discoveryService.start(listenPort: port),
+        );
       } catch (error, stackTrace) {
         _logger.error('discovery.start_failed', error, stackTrace);
-        discoveryHealth = DiscoveryHealth(
-          availability: DiscoveryAvailability.unavailable,
-          bindFailures: [
-            DiscoveryBindFailure(port: discoveryPort, message: '$error'),
-          ],
+        networkHealth.applyDiscoveryHealth(
+          DiscoveryHealth(
+            availability: DiscoveryAvailability.unavailable,
+            bindFailures: [
+              DiscoveryBindFailure(port: discoveryPort, message: '$error'),
+            ],
+          ),
         );
       }
       _transportSub = transportService.updates.listen(
@@ -332,12 +343,12 @@ class AppController extends ChangeNotifier {
           'reason': identityService.identityResetReason,
         });
       } else {
-        status = _startupNetworkStatus(port);
+        status = networkHealth.startupNetworkStatus(port);
       }
       _logger.info('app.initialize_completed', {
         'transportPort': port,
-        'discoveryState': discoveryHealth.availability.name,
-        'discoveryPort': discoveryHealth.boundPort,
+        'discoveryState': networkHealth.discoveryHealth.availability.name,
+        'discoveryPort': networkHealth.discoveryHealth.boundPort,
       });
       unawaited(refreshNetworkHealth());
       unawaited(checkForUpdates(manual: false));
@@ -361,28 +372,6 @@ class AppController extends ChangeNotifier {
       await operation();
     } catch (error, stackTrace) {
       _logger.error('$event.failed', error, stackTrace);
-    }
-  }
-
-  String _startupNetworkStatus(int port) {
-    switch (discoveryHealth.availability) {
-      case DiscoveryAvailability.active:
-        return languageCode == 'en'
-            ? 'Discovering LAN devices, local port $port'
-            : '正在局域网内发现设备，本机端口 $port';
-      case DiscoveryAvailability.degraded:
-        final discoveryPort = discoveryHealth.boundPort ?? 0;
-        return languageCode == 'en'
-            ? 'Using fallback discovery port $discoveryPort, local port $port'
-            : '发现端口已切换为 $discoveryPort，本机端口 $port';
-      case DiscoveryAvailability.unavailable:
-        return languageCode == 'en'
-            ? 'Automatic discovery is unavailable. Manual IP connection remains available.'
-            : '自动发现不可用，仍可使用 IP:端口 手动连接';
-      case DiscoveryAvailability.notStarted:
-        return languageCode == 'en'
-            ? 'LAN discovery has not started'
-            : '局域网发现尚未启动';
     }
   }
 
@@ -1294,7 +1283,7 @@ class AppController extends ChangeNotifier {
         : '正在测试 $cleanHost:$port...';
     notifyListeners();
     try {
-      final endpoints = await loadLocalNetworkEndpoints();
+      final endpoints = await networkHealth.loadLocalNetworkEndpoints();
       final result = (cleanHost.isEmpty || port <= 0 || port > 65535)
           ? NetworkDiagnosticResult(
               host: cleanHost,
@@ -1315,7 +1304,7 @@ class AppController extends ChangeNotifier {
         port: port,
         status: NetworkDiagnosticStatus.unknownError,
         errorDetail: '$error',
-        localEndpoints: await loadLocalNetworkEndpoints(),
+        localEndpoints: await networkHealth.loadLocalNetworkEndpoints(),
       );
       lastError = result.errorDetail;
       status = text.networkDiagnosticSummary(result);
@@ -1623,22 +1612,16 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  DiscoveryHealth get discoveryHealth => networkHealth.discoveryHealth;
+  WindowsFirewallStatus get firewallStatus => networkHealth.firewallStatus;
+  NetworkHealthSnapshot? get networkHealthSnapshot => networkHealth.snapshot;
+
   Future<NetworkHealthSnapshot?> refreshNetworkHealth() async {
-    if (networkHealthInProgress) return networkHealthSnapshot;
+    if (networkHealthInProgress) return networkHealth.snapshot;
     _beginOperation(_networkHealthOperationKey);
     notifyListeners();
     try {
-      discoveryHealth = discoveryService.health;
-      firewallStatus = await windowsFirewallService.getStatus();
-      final endpoints = await loadLocalNetworkEndpoints();
-      final snapshot = NetworkHealthSnapshot(
-        createdAt: _now(),
-        transportPort: localListenPort,
-        discovery: discoveryHealth,
-        localEndpoints: endpoints,
-        firewall: firewallStatus,
-      );
-      networkHealthSnapshot = snapshot;
+      final snapshot = await networkHealth.buildSnapshot();
       _logger.info('network.health_refreshed', {
         'transportPort': snapshot.transportPort,
         'discoveryState': snapshot.discovery.availability.name,
@@ -1650,7 +1633,7 @@ class AppController extends ChangeNotifier {
     } catch (error, stackTrace) {
       lastError = '$error';
       _logger.error('network.health_failed', error, stackTrace);
-      return networkHealthSnapshot;
+      return networkHealth.snapshot;
     } finally {
       _endOperation(_networkHealthOperationKey);
       notifyListeners();
@@ -1663,13 +1646,12 @@ class AppController extends ChangeNotifier {
     status = text.firewallRepairing;
     notifyListeners();
     try {
-      firewallStatus = await windowsFirewallService.repair();
-      if (firewallStatus.configured) {
+      final repaired = await networkHealth.repairFirewall();
+      if (repaired.configured) {
         status = text.firewallRepairSucceeded;
-        await discoveryService.announce();
       } else {
         status = text.firewallRepairFailed;
-        lastError = firewallStatus.detail;
+        lastError = repaired.detail;
       }
       await refreshNetworkHealth();
     } catch (error, stackTrace) {
@@ -1683,94 +1665,35 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> reannounceDiscovery() async {
-    await discoveryService.announce();
-    discoveryHealth = discoveryService.health;
+    await networkHealth.reannounce();
     status = text.discoveryAnnouncementSent;
-    _logger.info('discovery.manual_announce');
     notifyListeners();
   }
 
   String buildDiagnosticSummary() {
-    final snapshot = networkHealthSnapshot;
     final info = appInfo;
-    final lines = <String>[
-      'LocalChat ${info?.displayVersion ?? appVersionLabel}',
-      'Platform: ${info?.platform ?? Platform.operatingSystem}',
-      'Generated: ${_now().toIso8601String()}',
-      'Transport port: $localListenPort',
-      'Discovery: ${discoveryHealth.availability.name}',
-      'Discovery port: ${discoveryHealth.boundPort ?? '-'}',
-      'Discovery interfaces: ${discoveryHealth.interfaceAddresses.join(', ')}',
-      'Firewall: ${firewallStatus.state.name}',
-      'Firewall UDP: ${firewallStatus.udpConfigured}',
-      'Firewall TCP: ${firewallStatus.tcpConfigured}',
-      'Local endpoints: ${snapshot?.localEndpoints.join(', ') ?? '-'}',
-    ];
-    for (final failure in discoveryHealth.bindFailures) {
-      lines.add(
-        'Bind failure: port=${failure.port} errno=${failure.errorCode ?? '-'} '
-        'detail=${failure.message}',
-      );
-    }
-    if (firewallStatus.detail != null) {
-      lines.add('Firewall detail: ${firewallStatus.detail}');
-    }
-    return lines.join('\n');
+    return networkHealth.buildDiagnosticSummary(
+      appLine: 'LocalChat ${info?.displayVersion ?? appVersionLabel}',
+      platformLine: 'Platform: ${info?.platform ?? Platform.operatingSystem}',
+    );
   }
 
   Future<String?> exportDiagnosticReport() async {
-    final logger = diagnosticLogService;
-    if (logger == null) return null;
-    final report = await logger.buildExport(buildDiagnosticSummary());
-    final fileName =
-        'LocalChat-diagnostics-${_now().toIso8601String().replaceAll(':', '-')}.txt';
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: text.exportDiagnosticLogs,
-      fileName: fileName,
-      type: FileType.custom,
-      allowedExtensions: const ['txt'],
-      bytes: Platform.isAndroid
-          ? Uint8List.fromList(utf8.encode(report))
-          : null,
+    final path = await networkHealth.exportDiagnosticReport(
+      buildDiagnosticSummary(),
     );
-    if (path == null) return null;
-    if (!Platform.isAndroid) {
-      await File(path).writeAsString(report, flush: true);
+    if (path != null) {
+      status = text.diagnosticLogsExported;
+      notifyListeners();
     }
-    status = text.diagnosticLogsExported;
-    notifyListeners();
     return path;
   }
 
-  Future<void> openDiagnosticLogFolder() async {
-    final path = diagnosticLogService?.directoryPath;
-    if (path == null || path.isEmpty) return;
-    await openFolder(path);
-  }
+  Future<void> openDiagnosticLogFolder() =>
+      networkHealth.openDiagnosticLogFolder();
 
-  Future<List<String>> loadLocalNetworkEndpoints() async {
-    final port = localListenPort;
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-      );
-      final endpoints = <String>{};
-      for (final interface in interfaces) {
-        for (final address in interface.addresses) {
-          if (address.type != InternetAddressType.IPv4 || address.isLoopback) {
-            continue;
-          }
-          final ip = address.address.trim();
-          if (ip.isEmpty) continue;
-          endpoints.add(port > 0 ? '$ip:$port' : ip);
-        }
-      }
-      return endpoints.toList()..sort();
-    } on SocketException {
-      return const [];
-    }
-  }
+  Future<List<String>> loadLocalNetworkEndpoints() =>
+      networkHealth.loadLocalNetworkEndpoints();
 
   Future<void> retryMessage(ChatMessage message) async {
     if (message.direction != 'out' || message.status != 'failed') return;
@@ -1801,9 +1724,7 @@ class AppController extends ChangeNotifier {
       status = text.retrySucceeded;
     } catch (error) {
       lastError = '$error';
-      status = error is AppFailure
-          ? error.userMessage
-          : text.retryFailed;
+      status = error is AppFailure ? error.userMessage : text.retryFailed;
     } finally {
       await refresh();
       _endOperation('retry:${message.id}');
@@ -1985,9 +1906,7 @@ class AppController extends ChangeNotifier {
       return false;
     }
     final ok = await transportService.requestRemoteCancel(peer, transfer.id);
-    status = ok
-        ? text.transferCanceledStatus
-        : text.transferCancelFailed;
+    status = ok ? text.transferCanceledStatus : text.transferCancelFailed;
     notifyListeners();
     return ok;
   }

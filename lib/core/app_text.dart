@@ -481,12 +481,9 @@ class AppText {
   String deletedChat(String title) =>
       en ? 'Deleted chat $title' : '已删除会话 $title';
   String get messageDeleted => en ? 'Message deleted' : '消息已删除';
-  String get appearanceUpdated =>
-      en ? 'Appearance updated' : '外观模式已更新';
-  String get autostartEnabledStatus =>
-      en ? 'Start on boot enabled' : '已开启开机自启';
-  String get deviceListRefreshed =>
-      en ? 'Device list refreshed' : '已刷新设备列表';
+  String get appearanceUpdated => en ? 'Appearance updated' : '外观模式已更新';
+  String get autostartEnabledStatus => en ? 'Start on boot enabled' : '已开启开机自启';
+  String get deviceListRefreshed => en ? 'Device list refreshed' : '已刷新设备列表';
   String get pairingFailed => en ? 'Pairing failed' : '配对失败';
   String get addPeerFailed => en ? 'Add peer failed' : '添加好友失败';
   String get sendingCancelled => en ? 'Sending cancelled' : '已取消发送';
@@ -495,14 +492,23 @@ class AppText {
   String get retryFailed => en ? 'Retry failed' : '重新发送失败';
   String get saveFailed => en ? 'Save failed' : '保存失败';
   String get renameFailed => en ? 'Rename failed' : '文件重命名失败';
-  String get chatHistoryCleared =>
-      en ? 'Chat history cleared' : '聊天记录已清空';
-  String get transferCanceledStatus =>
-      en ? 'Transfer canceled' : '已取消传输';
+  String get chatHistoryCleared => en ? 'Chat history cleared' : '聊天记录已清空';
+  String get transferCanceledStatus => en ? 'Transfer canceled' : '已取消传输';
   String get transferCancelFailed =>
       en ? 'Transfer could not be canceled' : '无法取消该传输';
   String get refreshFailed => en ? 'Refresh failed' : '刷新失败';
   String get deviceFallbackName => en ? 'Device' : '设备';
   String peerReconnected(String title) =>
       en ? '$title reconnected' : '$title 已重新连接';
+  String startupDiscoveryActive(int port) => en
+      ? 'Discovering LAN devices, local port $port'
+      : '正在局域网内发现设备，本机端口 $port';
+  String startupDiscoveryDegraded(int discoveryPort, int port) => en
+      ? 'Using fallback discovery port $discoveryPort, local port $port'
+      : '发现端口已切换为 $discoveryPort，本机端口 $port';
+  String get startupDiscoveryUnavailable => en
+      ? 'Automatic discovery is unavailable. Manual IP connection remains available.'
+      : '自动发现不可用，仍可使用 IP:端口 手动连接';
+  String get startupDiscoveryNotStarted =>
+      en ? 'LAN discovery has not started' : '局域网发现尚未启动';
 }

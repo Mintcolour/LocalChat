@@ -968,19 +968,39 @@ class _NewMessageButton extends StatelessWidget {
   }
 }
 
-class _PairRequestCard extends StatelessWidget {
+class _PairRequestCard extends StatefulWidget {
   const _PairRequestCard({required this.controller, required this.request});
 
   final AppController controller;
   final PendingPairRequest request;
 
   @override
+  State<_PairRequestCard> createState() => _PairRequestCardState();
+}
+
+class _PairRequestCardState extends State<_PairRequestCard> {
+  final _codeInputController = TextEditingController();
+
+  @override
+  void dispose() {
+    _codeInputController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final request = widget.request;
     final scheme = Theme.of(context).colorScheme;
     final busy = controller.isOperationActive('pairRequest:${request.id}');
     final endpoint = request.host.isEmpty || request.port <= 0
         ? controller.text.notConnected
         : displayHost(request.host, request.port);
+    // SAS 请求：展示码与待输入码都使用本地派生值，忽略明文传输的 code。
+    final displayCode = request.sasCode ?? request.code;
+    final requiresCodeEntry = request.sasCode != null;
+    final codeEntered = !requiresCodeEntry ||
+        _codeInputController.text.trim() == request.sasCode;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Align(
@@ -1045,7 +1065,11 @@ class _PairRequestCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  Text(controller.text.firstConnectionConfirmCode),
+                  Text(
+                    requiresCodeEntry
+                        ? controller.text.pairSasPrompt
+                        : controller.text.firstConnectionConfirmCode,
+                  ),
                   const SizedBox(height: 10),
                   Container(
                     width: double.infinity,
@@ -1058,7 +1082,7 @@ class _PairRequestCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      _formatPairCode(request.code),
+                      _formatPairCode(displayCode),
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(
@@ -1073,14 +1097,33 @@ class _PairRequestCard extends StatelessWidget {
                     '${controller.text.fingerprint}: ${shortFingerprint(request.fingerprint)}',
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
+                  if (requiresCodeEntry) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _codeInputController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      autofillHints: const [AutofillHints.oneTimeCode],
+                      decoration: InputDecoration(
+                        isDense: true,
+                        counterText: '',
+                        border: const OutlineInputBorder(),
+                        hintText: controller.text.pairCodeInputHint,
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
                         child: FilledButton(
-                          onPressed: busy
+                          onPressed: busy || !codeEntered
                               ? null
-                              : () => controller.approvePairRequest(request.id),
+                              : () => controller.approvePairRequest(
+                                  request.id,
+                                  code: request.sasCode,
+                                ),
                           child: Text(controller.text.allow),
                         ),
                       ),

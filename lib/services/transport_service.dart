@@ -59,7 +59,9 @@ class TransportService {
   final _notificationEvents =
       StreamController<AppNotificationEvent>.broadcast();
   final _pairRequests = StreamController<PendingPairRequest>.broadcast();
-  final Map<String, Completer<bool>> _pendingPairApprovals = {};
+  // 待审批的配对请求：审批完成器 + 该请求期望的 SAS 校验码（旧版发起方为 null）。
+  final Map<String, ({Completer<bool> completer, String? sasCode})>
+      _pendingPairApprovals = {};
   final Map<String, DateTime> _lastProgressPersistedAt = {};
   final Map<String, int> _lastProgressBytes = {};
   // 出站单活动任务队列：同一时刻只跑一个出站传输，其余排队等待。
@@ -116,9 +118,9 @@ class TransportService {
 
   Future<void> stop() async {
     await _server?.close(force: true);
-    for (final completer in _pendingPairApprovals.values) {
-      if (!completer.isCompleted) {
-        completer.complete(false);
+    for (final pending in _pendingPairApprovals.values) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.complete(false);
       }
     }
     _pendingPairApprovals.clear();
@@ -126,17 +128,22 @@ class TransportService {
     _port = 0;
   }
 
-  void approvePairRequest(String requestId) {
-    final completer = _pendingPairApprovals[requestId];
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(true);
+  /// 允许配对请求。请求带 SAS 校验码（发起方支持 pair_sas_v2）时，
+  /// [codeInput] 必须与派生码一致，否则按拒绝处理（纵深防御，正常由 UI 拦截）。
+  void approvePairRequest(String requestId, {String? codeInput}) {
+    final pending = _pendingPairApprovals[requestId];
+    if (pending == null || pending.completer.isCompleted) return;
+    if (pending.sasCode != null && codeInput != pending.sasCode) {
+      pending.completer.complete(false);
+      return;
     }
+    pending.completer.complete(true);
   }
 
   void rejectPairRequest(String requestId) {
-    final completer = _pendingPairApprovals[requestId];
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(false);
+    final pending = _pendingPairApprovals[requestId];
+    if (pending != null && !pending.completer.isCompleted) {
+      pending.completer.complete(false);
     }
   }
 
@@ -215,6 +222,13 @@ class TransportService {
     final avatarColor = _string(body['avatar_color'], '#2563EB');
     final signingPublicKey = _string(body['signing_public_key'], '');
     final exchangePublicKey = _string(body['exchange_public_key'], '');
+    final requestCapabilities = _capabilitiesFrom(body['capabilities']);
+    // 发起方支持 pair_sas_v2 时忽略明文配对码，本地从双方指纹派生校验码；
+    // 中间人无法让两端显示相同数字，用户比对即可发现。
+    final identity = _identityService.identity;
+    final sasCode = requestCapabilities.contains(pairSasCapability)
+        ? pairSasCode(fingerprint, identity.fingerprint)
+        : null;
     // 摄入对端身份前校验自洽：拒绝设备 ID / 公钥 / 指纹不一致的配对请求。
     try {
       validatePeerIdentity(
@@ -236,7 +250,7 @@ class TransportService {
       fingerprint: fingerprint,
       avatarSeed: avatarSeed,
       avatarColor: avatarColor,
-      capabilities: _capabilitiesFrom(body['capabilities']),
+      capabilities: requestCapabilities,
     );
     final existing = await _db.getDevice(deviceId);
     // 已信任设备若身份公钥发生变化，拒绝继续配对，要求删除后重新配对（P0）。
@@ -256,11 +270,14 @@ class TransportService {
         fingerprint: fingerprint,
         avatarSeed: avatarSeed,
         avatarColor: avatarColor,
-        capabilities: _capabilitiesFrom(body['capabilities']),
+        capabilities: requestCapabilities,
       );
       final requestId = _uuid.v4();
       final completer = Completer<bool>();
-      _pendingPairApprovals[requestId] = completer;
+      _pendingPairApprovals[requestId] = (
+        completer: completer,
+        sasCode: sasCode,
+      );
       _pairRequests.add(
         PendingPairRequest(
           id: requestId,
@@ -276,6 +293,7 @@ class TransportService {
           avatarColor: avatarColor,
           code: code,
           createdAt: DateTime.now(),
+          sasCode: sasCode,
         ),
       );
       _updates.add(null);
@@ -301,13 +319,13 @@ class TransportService {
       fingerprint: fingerprint,
       avatarSeed: avatarSeed,
       avatarColor: avatarColor,
-      capabilities: _capabilitiesFrom(body['capabilities']),
+      capabilities: requestCapabilities,
     );
-    final identity = _identityService.identity;
     _updates.add(null);
     return _json({
       'accepted': true,
-      'code': code,
+      // SAS 模式回显本地派生码（与发起方派生值一致）；旧版回显收到的明文码。
+      'code': sasCode ?? code,
       'device_id': identity.deviceId,
       'display_name': identity.displayName,
       'platform': identity.platform,
@@ -334,11 +352,15 @@ class TransportService {
     return _json({'accepted': true});
   }
 
-  Future<void> pairWith(Device peer, String code) async {
+  /// 发起配对。校验码由双方指纹本地派生（见 [pairSasCode]）：本端展示派生值，
+  /// 请求体里携带派生值仅为兼容旧版接收方（旧版原样展示/回显）；新版接收方
+  /// 会忽略它并自行派生，因此明文传输不再构成中间人风险。
+  Future<void> pairWith(Device peer) async {
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
     final identity = _identityService.identity;
+    final code = pairSasCode(identity.fingerprint, peer.fingerprint);
     final response = await _dio.postUri<Map<String, dynamic>>(
       Uri.parse('http://${peer.host}:${peer.port}/v1/pair/request'),
       data: {
@@ -353,6 +375,16 @@ class TransportService {
         'avatar_seed': identity.avatarSeed,
         'avatar_color': identity.avatarColor,
         'code': code,
+        'capabilities': [
+          'text',
+          'files',
+          'pairing',
+          'encrypted_chunks',
+          encryptedStreamCapability,
+          folderCapability,
+          transferCancelCapability,
+          pairSasCapability,
+        ],
       },
     );
     final data = response.data;

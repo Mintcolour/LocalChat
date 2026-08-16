@@ -216,6 +216,15 @@ class AppText {
   String get firstConnectionConfirmCode => en
       ? 'First connection. Confirm the 6-digit security code:'
       : '首次连接，请确认 6 位安全校验码：';
+  String get pairSasPrompt => en
+      ? 'The code is derived from both devices. Enter the code shown on the other device to allow:'
+      : '校验码由双方设备共同派生，输入对方屏幕上显示的数字后才能允许：';
+  String get pairCodeInputHint => en
+      ? '6-digit code from the other device'
+      : '对方设备上的 6 位校验码';
+  String get pairCodeMismatch => en
+      ? 'Verification code did not match. Compare both screens and retry.'
+      : '校验码不一致，请核对双方屏幕显示后重试';
   String get trustedChannelEstablished =>
       en ? 'Trusted encrypted channel established' : '已建立可信安全加密通道';
   String get pairRequestRejected => en ? 'Pairing request rejected' : '已拒绝配对请求';

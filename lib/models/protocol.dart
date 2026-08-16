@@ -32,6 +32,11 @@ const folderCapability = 'folders_v1';
 // POST /v1/transfers/{id}/cancel 请求对端中断接收中的流。旧版本不广播此能力，
 // 发送方在尝试主动取消前必须检查对端能力，否则禁用取消并提示。
 const transferCancelCapability = 'transfer_cancel_v1';
+// 配对 SAS 校验码能力：发起方在配对请求里携带此能力时，接收方忽略请求中
+// 明文传输的配对码，改为本地从双方指纹派生校验码（见 [pairSasCode]），并要求
+// 输入比对后才允许配对。旧版本不携带此能力，接收方回退为展示明文配对码、
+// 点按允许的流程。
+const pairSasCapability = 'pair_sas_v2';
 
 enum PeerPresence { trusted, discovered }
 
@@ -39,6 +44,20 @@ enum PeerPresence { trusted, discovered }
 /// 与 [IdentityService] 生成本地身份时的算法一致。
 String fingerprintFromSigningKey(String signingPublicKeyB64) {
   return sha256Hex(unb64(signingPublicKeyB64));
+}
+
+/// 配对 SAS（短认证字符串）校验码：由双方签名公钥指纹确定性派生的 6 位数字。
+///
+/// 两端各自本地计算即可得到相同结果，不依赖网络传输保密——中间人持有不同
+/// 的密钥对时，无论怎样转发都无法让两端显示相同校验码，用户口头比对数字
+/// 即可发现中间人。指纹先排序保证派生与角色（发起方/接收方）无关。
+String pairSasCode(String fingerprintA, String fingerprintB) {
+  final ordered = [fingerprintA, fingerprintB]..sort();
+  final digest = sha256Hex(
+    utf8.encode('localchat-v1/pair-sas:${ordered.join(':')}'),
+  );
+  final value = int.parse(digest.substring(0, 8), radix: 16);
+  return (value % 1000000).toString().padLeft(6, '0');
 }
 
 /// 对端身份自洽性校验失败（设备 ID、签名公钥、指纹三者不一致）。
@@ -324,6 +343,7 @@ class PendingPairRequest {
     required this.avatarColor,
     required this.code,
     required this.createdAt,
+    this.sasCode,
   });
 
   final String id;
@@ -339,4 +359,8 @@ class PendingPairRequest {
   final String avatarColor;
   final String code;
   final DateTime createdAt;
+
+  /// 发起方支持 pair_sas_v2 时本地派生的校验码；非空时 UI 必须要求输入
+  /// 比对通过后才能允许配对，[code]（明文传输）仅作旧版展示回退。
+  final String? sasCode;
 }

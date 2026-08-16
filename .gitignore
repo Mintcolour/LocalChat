@@ -56,3 +56,6 @@ app.*.map.json
 /android/keystore.properties
 /android/app/localchat-release.jks
 /android/app/*.jks
+
+# Local agent session plans
+.zcode/

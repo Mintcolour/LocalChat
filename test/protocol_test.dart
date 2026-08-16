@@ -37,6 +37,20 @@ void main() {
     }
   });
 
+  test('pair SAS code is symmetric, deterministic and key-dependent', () {
+    final fpA = 'a' * 64;
+    final fpB = 'b' * 64;
+    // 双方各自计算结果一致，与角色无关。
+    expect(pairSasCode(fpA, fpB), pairSasCode(fpB, fpA));
+    // 确定性：同一对指纹反复派生得到同一数字。
+    expect(pairSasCode(fpA, fpB), pairSasCode(fpA, fpB));
+    expect(pairSasCode(fpA, fpB), matches(RegExp(r'^\d{6}$')));
+    // 中间人持有不同密钥 → 双方屏幕必然显示不同校验码。
+    final fpMitm = 'c' * 64;
+    expect(pairSasCode(fpA, fpB), isNot(pairSasCode(fpA, fpMitm)));
+    expect(pairSasCode(fpA, fpB), isNot(pairSasCode(fpMitm, fpB)));
+  });
+
   test('message timestamp uses compact local chat format', () {
     expect(
       formatMessageTimestamp(DateTime(2026, 6, 16, 9, 5, 3)),

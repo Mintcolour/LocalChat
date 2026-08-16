@@ -11,7 +11,6 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../core/app_text.dart';
 import '../core/app_failure.dart';
 import '../core/device_profile.dart';
-import '../core/formatters.dart';
 import '../core/peer_status.dart';
 import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
@@ -1227,14 +1226,21 @@ class AppController extends ChangeNotifier {
     await rejectPairRequest(request.id);
   }
 
-  Future<void> approvePairRequest(String requestId) async {
+  /// 允许配对请求。SAS 请求（[PendingPairRequest.sasCode] 非空）必须携带与
+  /// 派生码一致的 [code]，否则保持卡片并提示；此时返回 false 不做任何操作。
+  Future<bool> approvePairRequest(String requestId, {String? code}) async {
     final request = _pendingPairRequestById(requestId);
-    if (request == null) return;
+    if (request == null) return false;
+    if (request.sasCode != null && code != request.sasCode) {
+      status = text.pairCodeMismatch;
+      notifyListeners();
+      return false;
+    }
     final operationKey = 'pairRequest:$requestId';
     _beginOperation(operationKey);
     notifyListeners();
     try {
-      transportService.approvePairRequest(requestId);
+      transportService.approvePairRequest(requestId, codeInput: code);
       _removePendingPairRequest(requestId);
       pairingResultMessagesByDevice[request.deviceId] =
           text.trustedChannelEstablished;
@@ -1246,6 +1252,7 @@ class AppController extends ChangeNotifier {
       _endOperation(operationKey);
       notifyListeners();
     }
+    return true;
   }
 
   Future<void> rejectPairRequest(String requestId) async {
@@ -1301,8 +1308,8 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     });
     status = languageCode == 'en'
-        ? '${request.displayName} requests pairing. Confirm code ${request.code}.'
-        : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
+        ? '${request.displayName} requests pairing. Confirm code ${request.sasCode ?? request.code}.'
+        : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.sasCode ?? request.code}';
     await refresh();
     if (selectedDevice?.id != request.deviceId) {
       final device = await db.getDevice(request.deviceId);
@@ -1339,14 +1346,16 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> pair(Device device) async {
-    final code = randomCode();
+    // 校验码由双方指纹派生：本端与对端各自本地计算并显示同一数字，
+    // 用户比对一致即可确认没有中间人（见 pairSasCode）。
+    final code = pairSasCode(identity!.fingerprint, device.fingerprint);
     status = languageCode == 'en'
         ? 'Connecting to ${device.displayName} with code $code'
         : '正在用配对码 $code 连接 ${device.displayName}';
     _beginOperation('pair:${device.id}');
     notifyListeners();
     try {
-      await transportService.pairWith(device, code);
+      await transportService.pairWith(device);
       await refresh();
       status = languageCode == 'en'
           ? '${device.displayName} is trusted. You can now send directly.'

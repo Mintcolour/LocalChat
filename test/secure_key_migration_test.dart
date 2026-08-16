@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:drift/native.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:localchat/data/app_database.dart';
@@ -100,20 +101,123 @@ void main() {
   });
 
   test(
-    'missing secure keys fail closed instead of accepting DB placeholders',
+    'missing secure keys reset identity instead of accepting DB placeholders',
     () async {
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
       final secure = const SecureKeyStore();
-      await IdentityService(db, secureKeyStore: secure).load();
+      final first = await IdentityService(db, secureKeyStore: secure).load();
       expect(await db.getSetting('identity.signing_private_key'), '');
 
       await secure.clearAll();
 
-      await expectLater(
-        IdentityService(db, secureKeyStore: secure).load(),
-        throwsA(isA<StateError>()),
+      final service = IdentityService(db, secureKeyStore: secure);
+      final second = await service.load();
+
+      expect(service.identityResetDuringLoad, isTrue);
+      expect(second.deviceId, isNot(first.deviceId));
+      expect(second.signingPublicKey, isNot(first.signingPublicKey));
+      expect(await secure.readSigningPrivateKey(), second.signingPrivateKey);
+      expect(await secure.readExchangePrivateKey(), second.exchangePrivateKey);
+      expect(await db.getSetting('identity.signing_private_key'), '');
+      expect(await db.getSetting('identity.exchange_private_key'), '');
+    },
+  );
+
+  test(
+    'unreadable secure storage migrates again when legacy plaintext keys exist',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final legacy = await IdentityService(db).load();
+      final writes = <String, String>{};
+      var deleteAllCalled = false;
+      final unreadableSecureStore = SecureKeyStore(
+        readOverride: (_) async => throw PlatformException(
+          code: 'windows_error',
+          message: 'Error 0x00000000: Failure on CryptUnprotectData()',
+        ),
+        writeOverride: (key, value) async {
+          writes[key] = value;
+        },
+        deleteAllOverride: () async {
+          deleteAllCalled = true;
+        },
       );
+
+      final service = IdentityService(
+        db,
+        secureKeyStore: unreadableSecureStore,
+      );
+      final reloaded = await service.load();
+
+      expect(reloaded.deviceId, legacy.deviceId);
+      expect(reloaded.signingPrivateKey, legacy.signingPrivateKey);
+      expect(service.identityResetDuringLoad, isFalse);
+      expect(deleteAllCalled, isTrue);
+      expect(writes['identity.signing_private_key'], legacy.signingPrivateKey);
+      expect(
+        writes['identity.exchange_private_key'],
+        legacy.exchangePrivateKey,
+      );
+      expect(writes['identity.keys_migrated'], 'true');
+      expect(await db.getSetting('identity.signing_private_key'), '');
+      expect(await db.getSetting('identity.exchange_private_key'), '');
+    },
+  );
+
+  test(
+    'unreadable secure storage resets identity when private keys are unrecoverable',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final firstWrites = <String, String>{};
+      final firstStore = SecureKeyStore(
+        readOverride: (key) async => firstWrites[key],
+        writeOverride: (key, value) async {
+          firstWrites[key] = value;
+        },
+        deleteAllOverride: () async {
+          firstWrites.clear();
+        },
+      );
+      final first = await IdentityService(
+        db,
+        secureKeyStore: firstStore,
+      ).load();
+      expect(await db.getSetting('identity.signing_private_key'), '');
+
+      final secondWrites = <String, String>{};
+      final unreadableSecureStore = SecureKeyStore(
+        readOverride: (_) async => throw PlatformException(
+          code: 'windows_error',
+          message: 'Error 0x00000000: Failure on CryptUnprotectData()',
+        ),
+        writeOverride: (key, value) async {
+          secondWrites[key] = value;
+        },
+        deleteAllOverride: () async {},
+      );
+
+      final service = IdentityService(
+        db,
+        secureKeyStore: unreadableSecureStore,
+      );
+      final second = await service.load();
+
+      expect(service.identityResetDuringLoad, isTrue);
+      expect(service.identityResetReason, contains('CryptUnprotectData'));
+      expect(second.deviceId, isNot(first.deviceId));
+      expect(second.signingPublicKey, isNot(first.signingPublicKey));
+      expect(
+        secondWrites['identity.signing_private_key'],
+        second.signingPrivateKey,
+      );
+      expect(
+        secondWrites['identity.exchange_private_key'],
+        second.exchangePrivateKey,
+      );
+      expect(secondWrites['identity.keys_migrated'], 'true');
     },
   );
 }

@@ -1,5 +1,6 @@
 import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
+import '../models/network_health.dart';
 import 'peer_status.dart';
 
 class AppText {
@@ -27,6 +28,10 @@ class AppText {
   String get listeningLan =>
       en ? 'Listening for LAN broadcasts...' : '正在监听局域网广播...';
   String get identityStarting => en ? 'Initializing identity' : '身份初始化中';
+  String get localIdentityResetAfterSecureStorageFailure => en
+      ? 'Local identity was reset because Windows could not decrypt the saved keys. Pair trusted devices again.'
+      : 'Windows 无法解密已保存的本机身份密钥，已重置本机身份。请重新配对已信任设备。';
+  String get rescanFailed => en ? 'Device rescan failed' : '刷新设备列表失败';
   String get notConnected => en ? 'Not connected' : '未连接';
   String get pair => en ? 'Pair' : '配对';
   String get selectDevice =>
@@ -121,6 +126,51 @@ class AppText {
   String localNetworkEndpointsEmpty(int port) => en
       ? 'No LAN IPv4 address detected. Listening port: ${port > 0 ? port : '-'}'
       : '未发现可用局域网 IPv4。监听端口：${port > 0 ? port : '-'}';
+  String get networkDiagnosticsAndLogs =>
+      en ? 'Network diagnostics and logs' : '网络诊断与日志';
+  String networkDiagnosticsSubtitle(DiscoveryAvailability state) =>
+      switch (state) {
+        DiscoveryAvailability.active =>
+          en ? 'Automatic discovery is working' : '自动发现运行正常',
+        DiscoveryAvailability.degraded =>
+          en ? 'Using a fallback discovery port' : '正在使用备用发现端口',
+        DiscoveryAvailability.unavailable =>
+          en ? 'Automatic discovery is unavailable' : '自动发现不可用',
+        DiscoveryAvailability.notStarted =>
+          en ? 'Discovery has not started' : '发现服务尚未启动',
+      };
+  String get transportListenPort => en ? 'Transfer port' : '传输端口';
+  String get discoveryListenPort => en ? 'Discovery port' : '发现端口';
+  String get discoveryInterfaces => en ? 'Broadcast interfaces' : '广播网卡';
+  String get discoveryBindFailures =>
+      en ? 'Discovery bind failures' : '发现端口绑定失败';
+  String get firewallStatus => en ? 'Windows Firewall' : 'Windows 防火墙';
+  String firewallStatusLabel(WindowsFirewallRuleState state) => switch (state) {
+    WindowsFirewallRuleState.configured => en ? 'Configured' : '已配置',
+    WindowsFirewallRuleState.missing => en ? 'Rules missing' : '规则缺失',
+    WindowsFirewallRuleState.denied => en ? 'Repair denied' : '修复被拒绝',
+    WindowsFirewallRuleState.unknown => en ? 'Unknown' : '状态未知',
+    WindowsFirewallRuleState.unsupported => en ? 'Not applicable' : '不适用',
+  };
+  String get refreshNetworkStatus => en ? 'Refresh status' : '刷新状态';
+  String get sendDiscoveryAnnouncement =>
+      en ? 'Send discovery announcement' : '重新广播';
+  String get repairFirewall => en ? 'Repair firewall rules' : '一键修复防火墙';
+  String get firewallRepairing =>
+      en ? 'Repairing Windows Firewall...' : '正在修复 Windows 防火墙...';
+  String get firewallRepairSucceeded =>
+      en ? 'Windows Firewall rules configured' : 'Windows 防火墙规则已配置';
+  String get firewallRepairFailed =>
+      en ? 'Could not repair Windows Firewall' : 'Windows 防火墙修复失败';
+  String get discoveryAnnouncementSent =>
+      en ? 'Discovery announcement sent' : '已重新发送发现广播';
+  String get copyDiagnosticSummary => en ? 'Copy diagnostic summary' : '复制诊断摘要';
+  String get diagnosticSummaryCopied =>
+      en ? 'Diagnostic summary copied' : '诊断摘要已复制';
+  String get exportDiagnosticLogs => en ? 'Export diagnostic logs' : '导出诊断日志';
+  String get diagnosticLogsExported =>
+      en ? 'Diagnostic logs exported' : '诊断日志已导出';
+  String get openDiagnosticLogFolder => en ? 'Open log folder' : '打开日志目录';
   String get deviceNameVisible =>
       en ? 'Device name visible to others' : '别人看到的设备名称';
   String get language => en ? 'Language' : '语言';

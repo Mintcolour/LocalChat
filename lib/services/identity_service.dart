@@ -22,6 +22,11 @@ class IdentityService {
   LocalIdentity? _identity;
   SimpleKeyPair? _signingKeyPair;
   SimpleKeyPair? _exchangeKeyPair;
+  bool _identityResetDuringLoad = false;
+  String? _identityResetReason;
+
+  bool get identityResetDuringLoad => _identityResetDuringLoad;
+  String? get identityResetReason => _identityResetReason;
 
   LocalIdentity get identity {
     final value = _identity;
@@ -48,13 +53,33 @@ class IdentityService {
   }
 
   Future<LocalIdentity> load() async {
+    _identityResetDuringLoad = false;
+    _identityResetReason = null;
     final existingDeviceId = await _db.getSetting('identity.device_id');
     if (existingDeviceId != null) {
+      var secureStoreUnavailable = false;
+      String? secureStoreError;
       var signingPrivate = _nonEmpty(
-        await _secureKeyStore?.readSigningPrivateKey(),
+        await _readSecurePrivateKey(
+          () async => _secureKeyStore == null
+              ? null
+              : await _secureKeyStore.readSigningPrivateKey(),
+          onUnavailable: (error) {
+            secureStoreUnavailable = true;
+            secureStoreError = error;
+          },
+        ),
       );
       var exchangePrivate = _nonEmpty(
-        await _secureKeyStore?.readExchangePrivateKey(),
+        await _readSecurePrivateKey(
+          () async => _secureKeyStore == null
+              ? null
+              : await _secureKeyStore.readExchangePrivateKey(),
+          onUnavailable: (error) {
+            secureStoreUnavailable = true;
+            secureStoreError = error;
+          },
+        ),
       );
       final legacySigningPrivate = _nonEmpty(
         await _db.getSetting('identity.signing_private_key'),
@@ -81,12 +106,22 @@ class IdentityService {
       var avatarSeed = await _db.getSetting('identity.avatar_seed');
       var avatarColor = await _db.getSetting('identity.avatar_color');
       if (signingPrivate == null || exchangePrivate == null) {
-        throw StateError(
-          'Stored identity private keys are unavailable. Reset the local '
-          'identity and pair devices again.',
-        );
+        if (_secureKeyStore != null) {
+          await _resetUnreadableSecureIdentity(
+            secureStoreError ?? 'Stored identity private keys are unavailable.',
+          );
+        } else {
+          throw StateError(
+            'Stored identity private keys are unavailable. Reset the local '
+            'identity and pair devices again.',
+          );
+        }
+      } else if (secureStoreUnavailable) {
+        await _clearUnreadableSecureStore();
       }
-      if (signingPublic != null &&
+      if (signingPrivate != null &&
+          exchangePrivate != null &&
+          signingPublic != null &&
           exchangePublic != null &&
           displayName != null &&
           platform != null &&
@@ -97,7 +132,9 @@ class IdentityService {
         await _db.setSetting('identity.avatar_color', avatarColor);
         // 迁移：把私钥写入系统安全存储并清除数据库明文（仅当安全存储可用时）。
         if (_secureKeyStore != null &&
-            (migrated || !(await _secureKeyStore.isMigrated()))) {
+            (secureStoreUnavailable ||
+                migrated ||
+                !(await _secureKeyStore.isMigrated()))) {
           await _secureKeyStore.writeSigningPrivateKey(signingPrivate);
           await _secureKeyStore.writeExchangePrivateKey(exchangePrivate);
           await _db.setSetting('identity.signing_private_key', '');
@@ -188,6 +225,34 @@ class IdentityService {
 
   String? _nonEmpty(String? value) =>
       value == null || value.isEmpty ? null : value;
+
+  Future<String?> _readSecurePrivateKey(
+    Future<String?> Function() read, {
+    required void Function(String error) onUnavailable,
+  }) async {
+    try {
+      return await read();
+    } on SecureKeyStoreException catch (error) {
+      if (!error.isDataProtectionFailure) rethrow;
+      onUnavailable(error.message);
+      return null;
+    }
+  }
+
+  Future<void> _resetUnreadableSecureIdentity(String reason) async {
+    await _clearUnreadableSecureStore();
+    _identityResetDuringLoad = true;
+    _identityResetReason = reason;
+  }
+
+  Future<void> _clearUnreadableSecureStore() async {
+    try {
+      await _secureKeyStore?.clearAll();
+    } on SecureKeyStoreException {
+      // If the secure storage entry cannot be read, delete is best-effort. The
+      // following writes will replace the keys needed by the new identity.
+    }
+  }
 
   Future<LocalIdentity> updateDisplayName(String displayName) async {
     final current = identity;

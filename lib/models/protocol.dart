@@ -4,6 +4,23 @@ import '../core/formatters.dart';
 
 const protocolVersion = 1;
 const discoveryPort = 45871;
+const discoveryPorts = <int>[
+  45871,
+  45872,
+  45873,
+  45874,
+  45875,
+  59641,
+  59642,
+  59643,
+  59644,
+  59645,
+  61071,
+  61072,
+  61073,
+  61074,
+  61075,
+];
 const legacyTransferChunkSize = 256 * 1024;
 const encryptedStreamChunkSize = 4 * 1024 * 1024;
 const encryptedStreamVersion = 2;

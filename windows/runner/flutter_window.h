@@ -37,6 +37,8 @@ class FlutterWindow : public Win32Window {
       clipboard_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      windows_network_channel_;
   TrayController tray_;
   QuickDropShelf quick_drop_shelf_;
 };

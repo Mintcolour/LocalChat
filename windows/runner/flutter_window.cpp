@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "firewall_manager.h"
 #include "autostart.h"
 #include "single_instance.h"
 
@@ -383,6 +384,46 @@ bool FlutterWindow::OnCreate() {
         result->NotImplemented();
       });
   window_channel_ = std::move(window_channel);
+
+  auto windows_network_channel =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "localchat/windows_network",
+          &flutter::StandardMethodCodec::GetInstance());
+  windows_network_channel->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        const auto status_map = []() {
+          const auto status = firewall::GetStatus();
+          flutter::EncodableMap value;
+          value[flutter::EncodableValue("udpConfigured")] =
+              flutter::EncodableValue(status.udp_configured);
+          value[flutter::EncodableValue("tcpConfigured")] =
+              flutter::EncodableValue(status.tcp_configured);
+          value[flutter::EncodableValue("errorCode")] =
+              flutter::EncodableValue(static_cast<int64_t>(status.error_code));
+          return value;
+        };
+        if (call.method_name() == "getFirewallStatus") {
+          result->Success(flutter::EncodableValue(status_map()));
+          return;
+        }
+        if (call.method_name() == "repairFirewall") {
+          const DWORD repair_result = firewall::RunElevatedRepair(GetHandle());
+          if (repair_result != 0) {
+            result->Error(std::to_string(repair_result),
+                          repair_result == ERROR_CANCELLED
+                              ? "The administrator prompt was canceled."
+                              : "Unable to configure Windows Firewall.");
+            return;
+          }
+          result->Success(flutter::EncodableValue(status_map()));
+          return;
+        }
+        result->NotImplemented();
+      });
+  windows_network_channel_ = std::move(windows_network_channel);
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 

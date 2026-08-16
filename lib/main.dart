@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -14,9 +16,11 @@ import 'core/formatters.dart';
 import 'core/peer_status.dart';
 import 'data/app_database.dart';
 import 'models/network_diagnostic.dart';
+import 'models/network_health.dart';
 import 'models/protocol.dart';
 import 'models/update_check.dart';
 import 'services/file_store.dart';
+import 'services/diagnostic_log_service.dart';
 import 'services/secure_key_store.dart';
 import 'services/update_check_service.dart';
 import 'ui/attachment_preview.dart';
@@ -24,8 +28,25 @@ import 'ui/transfer_center_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final diagnosticLogService = DiagnosticLogService();
+  await diagnosticLogService.initialize();
+  FlutterError.onError = (details) {
+    diagnosticLogService.error(
+      'flutter.uncaught_error',
+      details.exception,
+      details.stack,
+    );
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    diagnosticLogService.error('platform.uncaught_error', error, stackTrace);
+    return true;
+  };
   // 生产环境启用系统安全存储（Android Keystore / Windows DPAPI）保存身份私钥。
-  final controller = AppController(secureKeyStore: const SecureKeyStore());
+  final controller = AppController(
+    secureKeyStore: const SecureKeyStore(),
+    diagnosticLogService: diagnosticLogService,
+  );
   await controller.initialize();
   runApp(LocalChatApp(controller: controller));
 }
@@ -1661,6 +1682,18 @@ Future<void> _showSettingsDialog(
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.network_check_outlined),
+                title: Text(controller.text.networkDiagnosticsAndLogs),
+                subtitle: Text(
+                  controller.text.networkDiagnosticsSubtitle(
+                    controller.discoveryHealth.availability,
+                  ),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showNetworkDiagnosticsDialog(context, controller),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.info_outline),
                 title: Text(controller.text.aboutLocalChat),
                 subtitle: Text(
@@ -1717,6 +1750,177 @@ Future<void> _showSettingsDialog(
           ),
         ],
       ),
+    ),
+  );
+}
+
+Future<void> _showNetworkDiagnosticsDialog(
+  BuildContext context,
+  AppController controller,
+) async {
+  unawaited(controller.refreshNetworkHealth());
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AnimatedBuilder(
+      animation: controller,
+      builder: (dialogContext, _) {
+        final text = controller.text;
+        final discovery = controller.discoveryHealth;
+        final firewall = controller.firewallStatus;
+        final snapshot = controller.networkHealthSnapshot;
+        final failures = discovery.bindFailures
+            .map(
+              (failure) =>
+                  '${failure.port}: errno=${failure.errorCode ?? '-'} '
+                  '${failure.message}',
+            )
+            .join('\n');
+        return AlertDialog(
+          title: Text(text.networkDiagnosticsAndLogs),
+          scrollable: true,
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(switch (discovery.availability) {
+                    DiscoveryAvailability.active => Icons.check_circle_outline,
+                    DiscoveryAvailability.degraded =>
+                      Icons.warning_amber_outlined,
+                    DiscoveryAvailability.unavailable => Icons.error_outline,
+                    DiscoveryAvailability.notStarted =>
+                      Icons.hourglass_empty_outlined,
+                  }),
+                  title: Text(
+                    text.networkDiagnosticsSubtitle(discovery.availability),
+                  ),
+                  subtitle: Text(
+                    '${text.discoveryListenPort}: '
+                    '${discovery.boundPort ?? '-'}',
+                  ),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.swap_horiz_outlined),
+                  title: Text(text.transportListenPort),
+                  trailing: Text('${controller.localListenPort}'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.router_outlined),
+                  title: Text(text.discoveryInterfaces),
+                  subtitle: SelectableText(
+                    discovery.interfaceAddresses.isEmpty
+                        ? '-'
+                        : discovery.interfaceAddresses.join('\n'),
+                  ),
+                ),
+                if (failures.isNotEmpty)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.report_problem_outlined),
+                    title: Text(text.discoveryBindFailures),
+                    subtitle: SelectableText(failures),
+                  ),
+                if (Platform.isWindows)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.shield_outlined),
+                    title: Text(text.firewallStatus),
+                    subtitle: Text(text.firewallStatusLabel(firewall.state)),
+                    trailing: firewall.configured
+                        ? const Icon(Icons.check_circle_outline)
+                        : FilledButton.icon(
+                            onPressed: controller.firewallRepairInProgress
+                                ? null
+                                : controller.repairWindowsFirewall,
+                            icon: controller.firewallRepairInProgress
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.build_outlined),
+                            label: Text(text.repairFirewall),
+                          ),
+                  ),
+                if (snapshot != null && snapshot.localEndpoints.isNotEmpty)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.lan_outlined),
+                    title: Text(text.localNetworkEndpoints),
+                    subtitle: SelectableText(
+                      snapshot.localEndpoints.join('\n'),
+                    ),
+                  ),
+                const Divider(),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: controller.networkHealthInProgress
+                          ? null
+                          : controller.refreshNetworkHealth,
+                      icon: const Icon(Icons.refresh),
+                      label: Text(text.refreshNetworkStatus),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: discovery.available
+                          ? controller.reannounceDiscovery
+                          : null,
+                      icon: const Icon(Icons.campaign_outlined),
+                      label: Text(text.sendDiscoveryAnnouncement),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(
+                            text: controller.buildDiagnosticSummary(),
+                          ),
+                        );
+                        if (!dialogContext.mounted) return;
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          SnackBar(content: Text(text.diagnosticSummaryCopied)),
+                        );
+                      },
+                      icon: const Icon(Icons.copy_outlined),
+                      label: Text(text.copyDiagnosticSummary),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: controller.diagnosticLogService == null
+                          ? null
+                          : controller.exportDiagnosticReport,
+                      icon: const Icon(Icons.save_alt_outlined),
+                      label: Text(text.exportDiagnosticLogs),
+                    ),
+                    if (Platform.isWindows)
+                      IconButton(
+                        tooltip: text.openDiagnosticLogFolder,
+                        onPressed:
+                            controller.diagnosticLogService?.directoryPath ==
+                                null
+                            ? null
+                            : controller.openDiagnosticLogFolder,
+                        icon: const Icon(Icons.folder_open_outlined),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(text.done),
+            ),
+          ],
+        );
+      },
     ),
   );
 }

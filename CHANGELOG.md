@@ -2,6 +2,28 @@
 
 This changelog is maintained in Chinese and English for the GitHub project page and release notes.
 
+## 1.3.5 - 2026-07-03
+
+### 中文
+
+- 修复 Windows UDP 发现端口报错 `10013` 时导致整个应用启动失败的问题；主端口不可用时会自动尝试备用端口。
+- 扩展 Windows 备用发现端口到 `59641-59645` 和 `61071-61075`，降低系统保留端口、虚拟网卡或安全软件占用默认端口时无法自动发现的概率。
+- 改进多网卡环境下的局域网发现，分别通过活动私网 IPv4 网卡广播，并按数据包来源端口回复。
+- 新增“网络诊断与日志”，可查看发现端口、广播网卡和 Windows 防火墙状态，并支持一键修复本地子网入站规则。
+- 新增自动轮转的基础诊断日志与导出功能，不记录聊天正文、文件内容、私钥、配对码或令牌。
+- 修复 Windows 安全存储无法解密或缺失本机身份密钥时启动停在“身份初始化中”的问题；旧明文密钥存在时会重新迁移，否则自动重置本机身份并提示重新配对。
+- 修复手动 IP 连接后收到配对请求时，聊天窗口没有自动切换到请求设备，导致内嵌配对卡片不可见的问题。
+
+### English
+
+- Fixed Windows startup failures caused by UDP discovery error `10013`; LocalChat now tries fallback discovery ports when the preferred port is unavailable.
+- Expanded Windows fallback discovery ports to `59641-59645` and `61071-61075`, reducing automatic discovery failures when default ports are reserved or blocked by adapters or security software.
+- Improved LAN discovery on multi-adapter systems by broadcasting through active private IPv4 interfaces and replying to each datagram's source port.
+- Added Network Diagnostics and Logs with discovery, adapter, and Windows Firewall status plus one-click local-subnet firewall repair.
+- Added rotating diagnostic logs and export support without recording chat text, file contents, private keys, pairing codes, or tokens.
+- Fixed startup getting stuck at identity initialization when Windows cannot decrypt or no longer has saved local identity keys; LocalChat re-migrates legacy plaintext keys when available, otherwise resets the local identity and asks the user to pair devices again.
+- Fixed incoming pairing requests after manual IP connection not switching the chat view to the requesting device, which could hide the inline pairing card.
+
 ## 1.3.4 - 2026-06-27
 
 ### 中文

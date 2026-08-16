@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -14,6 +15,7 @@ import '../core/formatters.dart';
 import '../core/peer_status.dart';
 import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
+import '../models/network_health.dart';
 import '../models/notification_event.dart';
 import '../models/protocol.dart';
 import '../models/pending_attachment.dart';
@@ -27,6 +29,7 @@ import '../services/android_keep_alive_service.dart';
 import '../services/app_info_service.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
+import '../services/diagnostic_log_service.dart';
 import '../services/file_store.dart';
 import '../services/identity_service.dart';
 import '../services/notification_service.dart';
@@ -34,12 +37,15 @@ import '../services/secure_key_store.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
 import '../services/update_check_service.dart';
+import '../services/windows_firewall_service.dart';
 import '../services/window_service.dart';
 
 const _staleDiscoveredDeviceAge = Duration(seconds: 20);
 const _refreshCoalesceDelay = Duration(milliseconds: 200);
 const _storageRootOperationKey = 'storageRoot';
 const _updateCheckOperationKey = 'updateCheck';
+const _networkHealthOperationKey = 'networkHealth';
+const _firewallRepairOperationKey = 'firewallRepair';
 const _dailyUpdateCheckInterval = Duration(hours: 24);
 
 class StorageMigrationResult {
@@ -59,6 +65,8 @@ class AppController extends ChangeNotifier {
     AndroidKeepAliveService? keepAliveService,
     AppInfoService? appInfoService,
     UpdateCheckService? updateCheckService,
+    DiagnosticLogService? diagnosticLogService,
+    WindowsFirewallService? windowsFirewallService,
     DateTime Function()? now,
   }) : db = database ?? AppDatabase(),
        fileStore = fileStore ?? FileStore(),
@@ -68,6 +76,13 @@ class AppController extends ChangeNotifier {
        keepAliveService = keepAliveService ?? const AndroidKeepAliveService(),
        appInfoService = appInfoService ?? const AppInfoService(),
        updateCheckService = updateCheckService ?? UpdateCheckService(),
+       diagnosticLogService = diagnosticLogService,
+       _logger = diagnosticLogService ?? const NoopDiagnosticLogger(),
+       windowsFirewallService =
+           windowsFirewallService ??
+           WindowsFirewallService(
+             logger: diagnosticLogService ?? const NoopDiagnosticLogger(),
+           ),
        _now = now ?? DateTime.now {
     // 生产环境由 main() 传入真实 SecureKeyStore；测试默认不传（回退数据库明文），
     // 避免依赖平台安全存储插件。
@@ -79,7 +94,7 @@ class AppController extends ChangeNotifier {
       securityService,
       this.fileStore,
     );
-    discoveryService = DiscoveryService(db, identityService);
+    discoveryService = DiscoveryService(db, identityService, logger: _logger);
     settings = SettingsController(db: db, windowService: windowService);
   }
 
@@ -90,6 +105,9 @@ class AppController extends ChangeNotifier {
   final AndroidKeepAliveService keepAliveService;
   final AppInfoService appInfoService;
   final UpdateCheckService updateCheckService;
+  final DiagnosticLogService? diagnosticLogService;
+  final DiagnosticLogger _logger;
+  final WindowsFirewallService windowsFirewallService;
   final DateTime Function() _now;
   final WindowService windowService = const WindowService();
   late final IdentityService identityService;
@@ -176,6 +194,10 @@ class AppController extends ChangeNotifier {
   int notificationSerial = 0;
   AppInfo? appInfo;
   UpdateCheckResult? updateCheckResult;
+  DiscoveryHealth discoveryHealth = const DiscoveryHealth.notStarted();
+  WindowsFirewallStatus firewallStatus =
+      const WindowsFirewallStatus.unsupported();
+  NetworkHealthSnapshot? networkHealthSnapshot;
   bool _appForeground = true;
   List<String> pendingSharedFiles = [];
   String? pendingSharedText;
@@ -213,6 +235,10 @@ class AppController extends ChangeNotifier {
   bool get storageRootOperationInProgress =>
       isOperationActive(_storageRootOperationKey);
   bool get updateCheckInProgress => isOperationActive(_updateCheckOperationKey);
+  bool get networkHealthInProgress =>
+      isOperationActive(_networkHealthOperationKey);
+  bool get firewallRepairInProgress =>
+      isOperationActive(_firewallRepairOperationKey);
   bool get hasCustomStorageRootPath => settings.storageRootPath != null;
   DateTime? get lastUpdateCheckAt => settings.lastUpdateCheckAt;
   String get languageCode => settings.languageCode;
@@ -231,33 +257,53 @@ class AppController extends ChangeNotifier {
   Future<void> initialize() async {
     busy = true;
     notifyListeners();
+    _logger.info('app.initialize_started');
+    var transportStarted = false;
     try {
       identity = await identityService.load();
       await settings.load();
       await loadAppInfo();
-      await windowService.setQuickDropFilesHandler(
-        handleQuickDropFiles,
-        onHide: () {
-          unawaited(settings.setQuickSendEnabled(false));
-          notifyListeners();
-        },
-      );
+      await _runOptional('window.quick_drop_setup', () async {
+        await windowService.setQuickDropFilesHandler(
+          handleQuickDropFiles,
+          onHide: () {
+            unawaited(settings.setQuickSendEnabled(false));
+            notifyListeners();
+          },
+        );
+      });
       await _syncStorageRootFromSettings();
       if (settings.keepAliveEnabled && keepAliveService.isSupported) {
-        await keepAliveService.start();
+        await _runOptional('android.keep_alive_start', () async {
+          await keepAliveService.start();
+        });
       }
-      await notificationService.initialize();
-      if (settings.notificationsEnabled) {
-        await notificationService.requestPermissionIfNeeded();
-      }
-      _notificationTapSub = notificationService.notificationTapStream.listen(
-        (payload) => unawaited(handleNotificationPayload(payload)),
-      );
+      await _runOptional('notifications.initialize', () async {
+        await notificationService.initialize();
+        if (settings.notificationsEnabled) {
+          await notificationService.requestPermissionIfNeeded();
+        }
+        _notificationTapSub = notificationService.notificationTapStream.listen(
+          (payload) => unawaited(handleNotificationPayload(payload)),
+        );
+      });
       transportService.autoCopyReceivedText = settings.autoCopyReceivedText;
       transportService.languageCode = settings.languageCode;
       transportService.reconnectPeer = _waitForReconnectedPeer;
       final port = await transportService.start();
-      await discoveryService.start(listenPort: port);
+      transportStarted = true;
+      _logger.info('transport.started', {'port': port});
+      try {
+        discoveryHealth = await discoveryService.start(listenPort: port);
+      } catch (error, stackTrace) {
+        _logger.error('discovery.start_failed', error, stackTrace);
+        discoveryHealth = DiscoveryHealth(
+          availability: DiscoveryAvailability.unavailable,
+          bindFailures: [
+            DiscoveryBindFailure(port: discoveryPort, message: '$error'),
+          ],
+        );
+      }
       _transportSub = transportService.updates.listen(
         (_) => _scheduleRefresh(),
       );
@@ -278,20 +324,69 @@ class AppController extends ChangeNotifier {
         const Duration(seconds: 5),
         (_) => _refreshPeerPresence(),
       );
-      await _loadSharingIntents();
+      await _runOptional('sharing_intents.load', _loadSharingIntents);
       await refresh();
       unawaited(_syncQuickSendDevices());
-      status = languageCode == 'en'
-          ? 'Discovering LAN devices, local port $port'
-          : '正在局域网内发现设备，本机端口 $port';
       initialized = true;
+      if (identityService.identityResetDuringLoad) {
+        status = text.localIdentityResetAfterSecureStorageFailure;
+        notificationText = status;
+        notificationSerial++;
+        _logger.warning('identity.reset_after_secure_storage_failure', {
+          'reason': identityService.identityResetReason,
+        });
+      } else {
+        status = _startupNetworkStatus(port);
+      }
+      _logger.info('app.initialize_completed', {
+        'transportPort': port,
+        'discoveryState': discoveryHealth.availability.name,
+        'discoveryPort': discoveryHealth.boundPort,
+      });
+      unawaited(refreshNetworkHealth());
       unawaited(checkForUpdates(manual: false));
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _logger.error('app.initialize_failed', error, stackTrace);
       lastError = '$error';
       status = languageCode == 'en' ? 'Startup failed' : '启动失败';
+      await discoveryService.stop();
+      if (transportStarted) await transportService.stop();
     } finally {
       busy = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _runOptional(
+    String event,
+    Future<void> Function() operation,
+  ) async {
+    try {
+      await operation();
+    } catch (error, stackTrace) {
+      _logger.error('$event.failed', error, stackTrace);
+    }
+  }
+
+  String _startupNetworkStatus(int port) {
+    switch (discoveryHealth.availability) {
+      case DiscoveryAvailability.active:
+        return languageCode == 'en'
+            ? 'Discovering LAN devices, local port $port'
+            : '正在局域网内发现设备，本机端口 $port';
+      case DiscoveryAvailability.degraded:
+        final discoveryPort = discoveryHealth.boundPort ?? 0;
+        return languageCode == 'en'
+            ? 'Using fallback discovery port $discoveryPort, local port $port'
+            : '发现端口已切换为 $discoveryPort，本机端口 $port';
+      case DiscoveryAvailability.unavailable:
+        return languageCode == 'en'
+            ? 'Automatic discovery is unavailable. Manual IP connection remains available.'
+            : '自动发现不可用，仍可使用 IP:端口 手动连接';
+      case DiscoveryAvailability.notStarted:
+        return languageCode == 'en'
+            ? 'LAN discovery has not started'
+            : '局域网发现尚未启动';
     }
   }
 
@@ -1092,15 +1187,23 @@ class AppController extends ChangeNotifier {
     status = languageCode == 'en'
         ? 'Rescanning LAN devices...'
         : '正在重新搜索局域网设备...';
+    lastError = null;
     notifyListeners();
-    await discoveryService.announce();
-    await _refreshPeerPresence();
-    await db.deleteStaleUntrustedDevices(
-      DateTime.now().subtract(_staleDiscoveredDeviceAge),
-    );
-    await refresh();
-    status = languageCode == 'en' ? 'Device list refreshed' : '已刷新设备列表';
-    notifyListeners();
+    try {
+      await discoveryService.announce();
+      await _refreshPeerPresence();
+      await db.deleteStaleUntrustedDevices(
+        DateTime.now().subtract(_staleDiscoveredDeviceAge),
+      );
+      await refresh();
+      status = languageCode == 'en' ? 'Device list refreshed' : '已刷新设备列表';
+    } catch (error, stackTrace) {
+      _logger.error('discovery.rescan_failed', error, stackTrace);
+      lastError = '$error';
+      status = text.rescanFailed;
+    } finally {
+      notifyListeners();
+    }
   }
 
   Future<void> renameLocalDevice(String title) async {
@@ -1201,7 +1304,7 @@ class AppController extends ChangeNotifier {
         ? '${request.displayName} requests pairing. Confirm code ${request.code}.'
         : '${request.displayName} 请求配对，请确认 6 位校验码 ${request.code}';
     await refresh();
-    if (selectedDevice == null) {
+    if (selectedDevice?.id != request.deviceId) {
       final device = await db.getDevice(request.deviceId);
       if (device != null) {
         await selectDevice(device);
@@ -1630,6 +1733,131 @@ class AppController extends ChangeNotifier {
     } else {
       await OpenFilex.open(folder);
     }
+  }
+
+  Future<NetworkHealthSnapshot?> refreshNetworkHealth() async {
+    if (networkHealthInProgress) return networkHealthSnapshot;
+    _beginOperation(_networkHealthOperationKey);
+    notifyListeners();
+    try {
+      discoveryHealth = discoveryService.health;
+      firewallStatus = await windowsFirewallService.getStatus();
+      final endpoints = await loadLocalNetworkEndpoints();
+      final snapshot = NetworkHealthSnapshot(
+        createdAt: _now(),
+        transportPort: localListenPort,
+        discovery: discoveryHealth,
+        localEndpoints: endpoints,
+        firewall: firewallStatus,
+      );
+      networkHealthSnapshot = snapshot;
+      _logger.info('network.health_refreshed', {
+        'transportPort': snapshot.transportPort,
+        'discoveryState': snapshot.discovery.availability.name,
+        'discoveryPort': snapshot.discovery.boundPort,
+        'interfaces': snapshot.discovery.interfaceAddresses.join(','),
+        'firewallState': snapshot.firewall.state.name,
+      });
+      return snapshot;
+    } catch (error, stackTrace) {
+      lastError = '$error';
+      _logger.error('network.health_failed', error, stackTrace);
+      return networkHealthSnapshot;
+    } finally {
+      _endOperation(_networkHealthOperationKey);
+      notifyListeners();
+    }
+  }
+
+  Future<void> repairWindowsFirewall() async {
+    if (!windowsFirewallService.isSupported || firewallRepairInProgress) return;
+    _beginOperation(_firewallRepairOperationKey);
+    status = text.firewallRepairing;
+    notifyListeners();
+    try {
+      firewallStatus = await windowsFirewallService.repair();
+      if (firewallStatus.configured) {
+        status = text.firewallRepairSucceeded;
+        await discoveryService.announce();
+      } else {
+        status = text.firewallRepairFailed;
+        lastError = firewallStatus.detail;
+      }
+      await refreshNetworkHealth();
+    } catch (error, stackTrace) {
+      status = text.firewallRepairFailed;
+      lastError = '$error';
+      _logger.error('firewall.repair_controller_failed', error, stackTrace);
+    } finally {
+      _endOperation(_firewallRepairOperationKey);
+      notifyListeners();
+    }
+  }
+
+  Future<void> reannounceDiscovery() async {
+    await discoveryService.announce();
+    discoveryHealth = discoveryService.health;
+    status = text.discoveryAnnouncementSent;
+    _logger.info('discovery.manual_announce');
+    notifyListeners();
+  }
+
+  String buildDiagnosticSummary() {
+    final snapshot = networkHealthSnapshot;
+    final info = appInfo;
+    final lines = <String>[
+      'LocalChat ${info?.displayVersion ?? appVersionLabel}',
+      'Platform: ${info?.platform ?? Platform.operatingSystem}',
+      'Generated: ${_now().toIso8601String()}',
+      'Transport port: $localListenPort',
+      'Discovery: ${discoveryHealth.availability.name}',
+      'Discovery port: ${discoveryHealth.boundPort ?? '-'}',
+      'Discovery interfaces: ${discoveryHealth.interfaceAddresses.join(', ')}',
+      'Firewall: ${firewallStatus.state.name}',
+      'Firewall UDP: ${firewallStatus.udpConfigured}',
+      'Firewall TCP: ${firewallStatus.tcpConfigured}',
+      'Local endpoints: ${snapshot?.localEndpoints.join(', ') ?? '-'}',
+    ];
+    for (final failure in discoveryHealth.bindFailures) {
+      lines.add(
+        'Bind failure: port=${failure.port} errno=${failure.errorCode ?? '-'} '
+        'detail=${failure.message}',
+      );
+    }
+    if (firewallStatus.detail != null) {
+      lines.add('Firewall detail: ${firewallStatus.detail}');
+    }
+    return lines.join('\n');
+  }
+
+  Future<String?> exportDiagnosticReport() async {
+    final logger = diagnosticLogService;
+    if (logger == null) return null;
+    final report = await logger.buildExport(buildDiagnosticSummary());
+    final fileName =
+        'LocalChat-diagnostics-${_now().toIso8601String().replaceAll(':', '-')}.txt';
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: text.exportDiagnosticLogs,
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: const ['txt'],
+      bytes: Platform.isAndroid
+          ? Uint8List.fromList(utf8.encode(report))
+          : null,
+    );
+    if (path == null) return null;
+    if (!Platform.isAndroid) {
+      await File(path).writeAsString(report, flush: true);
+    }
+    status = text.diagnosticLogsExported;
+    notifyListeners();
+    return path;
+  }
+
+  Future<void> openDiagnosticLogFolder() async {
+    final path = diagnosticLogService?.directoryPath;
+    if (path == null || path.isEmpty) return;
+    await openFolder(path);
   }
 
   Future<List<String>> loadLocalNetworkEndpoints() async {
@@ -2075,8 +2303,10 @@ class AppController extends ChangeNotifier {
     _presenceTimer?.cancel();
     _refreshTimer?.cancel();
     unawaited(keepAliveService.stop());
-    discoveryService.stop();
-    transportService.stop();
+    unawaited(discoveryService.stop());
+    unawaited(transportService.stop());
+    final logger = diagnosticLogService;
+    if (logger != null) unawaited(logger.dispose());
     notificationService.dispose();
     db.close();
     super.dispose();

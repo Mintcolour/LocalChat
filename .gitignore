@@ -48,6 +48,10 @@ app.*.map.json
 # Local-only environment cache
 .dart_local/
 
+# Local agent/tool caches
+.codegraph/
+.reasonix/
+
 # Android release signing credentials (do not commit private key)
 /android/keystore.properties
 /android/app/localchat-release.jks

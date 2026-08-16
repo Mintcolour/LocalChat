@@ -8,6 +8,7 @@ project(runner LANGUAGES CXX)
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
   "autostart.cpp"
+  "firewall_manager.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "quick_drop_shelf.cpp"
@@ -42,6 +43,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "gdi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "oleaut32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "shell32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 

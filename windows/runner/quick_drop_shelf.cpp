@@ -4,6 +4,7 @@
 #include <ole2.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <utility>
 
@@ -13,11 +14,35 @@ constexpr UINT kDragChanged = WM_APP + 0x341;
 constexpr UINT_PTR kWatchTimer = 1;
 constexpr UINT_PTR kEndTimer = 2;
 constexpr UINT_PTR kLeaveTimer = 3;
+constexpr UINT_PTR kAnimTimer = 4;
 constexpr int kPromptWidth = 360;
 constexpr int kExpandedWidth = 420;
 constexpr int kPromptHeight = 52;
 constexpr int kExpandedHeight = 168;
+constexpr int kBottomMargin = 28;
+constexpr int kSlideDistance = 18;
 constexpr BYTE kOpacity = 248;
+// Animation durations in milliseconds.
+constexpr double kAppearMs = 200;
+constexpr double kDisappearMs = 150;
+constexpr double kExpandMs = 190;
+constexpr double kHoverMs = 120;
+constexpr COLORREF kBackground = RGB(39, 43, 47);
+constexpr COLORREF kHoverFill = RGB(31, 120, 96);
+
+double EaseOutCubic(double t) {
+  const double inverse = 1.0 - t;
+  return 1.0 - inverse * inverse * inverse;
+}
+
+COLORREF MixColor(COLORREF from, COLORREF to, double t) {
+  const auto channel = [t](int a, int b) {
+    return static_cast<BYTE>(a + (b - a) * t + 0.5);
+  };
+  return RGB(channel(GetRValue(from), GetRValue(to)),
+             channel(GetGValue(from), GetGValue(to)),
+             channel(GetBValue(from), GetBValue(to)));
+}
 
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) return {};
@@ -114,17 +139,14 @@ class QuickDropShelf::DropTarget : public IDropTarget {
     const POINT cursor = {point.x, point.y};
     shelf_->ScrollToward(cursor);
     const int hover = shelf_->HitTest(cursor);
-    if (hover != shelf_->hover_index_) {
-      shelf_->hover_index_ = hover;
-      InvalidateRect(shelf_->hwnd_, nullptr, FALSE);
-    }
+    shelf_->SetHover(hover);
     if (shelf_->DropIndex(cursor) >= 0) *effect = DROPEFFECT_COPY;
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE DragLeave() override {
     accepted_ = false;
     shelf_->ole_drag_active_ = false;
-    shelf_->hover_index_ = -1;
+    shelf_->SetHover(-1);
     SetTimer(shelf_->hwnd_, kLeaveTimer, 120, nullptr);
     return S_OK;
   }
@@ -141,7 +163,7 @@ class QuickDropShelf::DropTarget : public IDropTarget {
     }
     accepted_ = false;
     shelf_->ole_drag_active_ = false;
-    shelf_->Hide();
+    shelf_->BeginHide();
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
@@ -213,8 +235,29 @@ bool QuickDropShelf::Create(HWND owner) {
     hwnd_ = nullptr;
     return false;
   }
-  SetLayeredWindowAttributes(hwnd_, 0, kOpacity, LWA_ALPHA);
+  SetLayeredWindowAttributes(hwnd_, 0, 0, LWA_ALPHA);
   return true;
+}
+
+double QuickDropShelf::Tween::Value(ULONGLONG now) const {
+  if (Done(now)) return to;
+  const double t = static_cast<double>(now - start) / duration;
+  return from + (to - from) * EaseOutCubic(t);
+}
+bool QuickDropShelf::Tween::Done(ULONGLONG now) const {
+  return duration <= 0 || now >= start + static_cast<ULONGLONG>(duration);
+}
+void QuickDropShelf::Tween::Retarget(double target, double duration_ms,
+                                     ULONGLONG now) {
+  from = Value(now);
+  to = target;
+  start = now;
+  // Shorten the transition proportionally when only part of it remains.
+  duration = duration_ms * (std::min)(1.0, std::fabs(target - from));
+}
+void QuickDropShelf::Tween::Finish() {
+  from = to;
+  duration = 0;
 }
 
 void QuickDropShelf::Destroy() {
@@ -242,20 +285,36 @@ void QuickDropShelf::UpdateDevices(std::vector<QuickDropDevice> devices) {
 
 int QuickDropShelf::Scale(int value) const { return MulDiv(value, dpi_, 96); }
 
+double QuickDropShelf::Duration(double milliseconds) const {
+  return animate_ ? milliseconds : 0;
+}
+
 void QuickDropShelf::ShowForDrag(POINT point) {
   if (!enabled_ || !hwnd_) return;
   KillTimer(hwnd_, kEndTimer);
   if (state_ != State::hidden) return;
+  BOOL animations = TRUE;
+  SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
+  animate_ = animations != FALSE;
+  // A new gesture may start while the previous one is still fading out; in
+  // that case reverse the fade from its current value instead of restarting.
+  const bool visible = IsWindowVisible(hwnd_) != FALSE;
+  if (!visible) {
+    visibility_ = {};
+    expand_ = {};
+  }
   drag_devices_ = devices_;
+  hover_.assign(drag_devices_.size(), Tween{});
   state_ = State::prompt;
   scroll_x_ = 0;
   hover_index_ = -1;
-  shown_at_ = GetTickCount64();
+  const ULONGLONG now = GetTickCount64();
+  visibility_.Retarget(1, Duration(kAppearMs), now);
+  expand_.Retarget(0, Duration(kExpandMs), now);
   Layout(point);
-  SetLayeredWindowAttributes(hwnd_, 0, 0, LWA_ALPHA);
-  ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+  if (!visible) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
   SetTimer(hwnd_, kWatchTimer, 30, nullptr);
-  InvalidateRect(hwnd_, nullptr, FALSE);
+  AnimationFrame();
   UpdateWindow(hwnd_);
 }
 
@@ -264,43 +323,139 @@ void QuickDropShelf::Hide() {
   KillTimer(hwnd_, kWatchTimer);
   KillTimer(hwnd_, kEndTimer);
   KillTimer(hwnd_, kLeaveTimer);
+  KillTimer(hwnd_, kAnimTimer);
+  animating_ = false;
   ShowWindow(hwnd_, SW_HIDE);
   state_ = State::hidden;
   hover_index_ = -1;
   ole_drag_active_ = false;
   drag_devices_.clear();
+  hover_.clear();
+  visibility_ = {};
+  expand_ = {};
+}
+
+void QuickDropShelf::BeginHide() {
+  if (!hwnd_ || state_ == State::hidden) return;
+  KillTimer(hwnd_, kWatchTimer);
+  KillTimer(hwnd_, kEndTimer);
+  KillTimer(hwnd_, kLeaveTimer);
+  // Logically hidden at once so no further drop can be accepted; the window
+  // only lingers for the fade and slide-out.
+  state_ = State::hidden;
+  ole_drag_active_ = false;
+  // SetHover applies a frame immediately. Arm the fade first, otherwise a
+  // zero-progress hover can look settled and trigger Hide before fading.
+  visibility_.Retarget(0, Duration(kDisappearMs), GetTickCount64());
+  SetHover(-1);
+  AnimationFrame();
 }
 
 void QuickDropShelf::SetExpanded(bool expanded) {
   if (state_ == State::hidden) return;
   state_ = expanded ? State::devices : State::prompt;
-  hover_index_ = -1;
-  POINT point;
-  GetCursorPos(&point);
-  Layout(point);
-  InvalidateRect(hwnd_, nullptr, FALSE);
+  SetHover(-1);
+  expand_.Retarget(expanded ? 1 : 0, Duration(kExpandMs), GetTickCount64());
+  AnimationFrame();
+}
+
+void QuickDropShelf::SetHover(int index) {
+  if (index == hover_index_) return;
+  const ULONGLONG now = GetTickCount64();
+  const int count = static_cast<int>(hover_.size());
+  if (hover_index_ >= 0 && hover_index_ < count) {
+    hover_[hover_index_].Retarget(0, Duration(kHoverMs), now);
+  }
+  if (index >= 0 && index < count) {
+    hover_[index].Retarget(1, Duration(kHoverMs), now);
+  }
+  hover_index_ = index;
+  AnimationFrame();
 }
 
 void QuickDropShelf::Layout(POINT point) {
   if (laying_out_) return;
   laying_out_ = true;
-  monitor_ = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+  const HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
   MONITORINFO info = {sizeof(info)};
-  if (!GetMonitorInfoW(monitor_, &info)) { laying_out_ = false; return; }
-  // Move onto the destination monitor before reading its effective window DPI.
-  // NOREDRAW prevents an intermediate frame at the positioning probe.
-  SetWindowPos(hwnd_, HWND_TOPMOST, info.rcWork.left + 1, info.rcWork.top + 1,
-      0, 0, SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOREDRAW);
+  if (!GetMonitorInfoW(monitor, &info)) { laying_out_ = false; return; }
+  if (monitor != monitor_ || !IsWindowVisible(hwnd_)) {
+    // Move onto the destination monitor before reading its effective window
+    // DPI. NOREDRAW prevents an intermediate frame at the positioning probe.
+    SetWindowPos(hwnd_, HWND_TOPMOST, info.rcWork.left + 1, info.rcWork.top + 1,
+        0, 0, SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOREDRAW);
+  }
+  monitor_ = monitor;
+  work_ = info.rcWork;
   dpi_ = GetDpiForWindow(hwnd_);
   if (!dpi_) dpi_ = 96;
-  const int width = Scale(state_ == State::devices ? kExpandedWidth : kPromptWidth);
-  const int height = Scale(state_ == State::devices ? kExpandedHeight : kPromptHeight);
-  const int x = (std::max)(info.rcWork.left, info.rcWork.right - width - Scale(16));
-  const int y = (std::max)(info.rcWork.top, info.rcWork.bottom - height - Scale(16));
-  SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
-  SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, width + 1, height + 1,
-      Scale(14), Scale(14)), TRUE);
+  region_ = {};  // DPI may have changed; force a new rounded region.
+  ApplyFrame();
   laying_out_ = false;
+}
+
+void QuickDropShelf::ApplyFrame() {
+  if (!hwnd_) return;
+  const ULONGLONG now = GetTickCount64();
+  const double expand = expand_.Value(now);
+  const double visible = visibility_.Value(now);
+  const auto mix = [expand](int prompt, int expanded) {
+    return static_cast<int>(std::lround(prompt + (expanded - prompt) * expand));
+  };
+  const int width = Scale(mix(kPromptWidth, kExpandedWidth));
+  const int height = Scale(mix(kPromptHeight, kExpandedHeight));
+  // Bottom-centered on the work area; grows upward and slides in from below.
+  const int x = work_.left + ((work_.right - work_.left) - width) / 2;
+  const int slide = static_cast<int>(std::lround(Scale(kSlideDistance) * (1 - visible)));
+  const int y = (std::max)(work_.top,
+      work_.bottom - Scale(kBottomMargin) - height + slide);
+  SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+  if (region_.right != width || region_.bottom != height) {
+    region_ = {0, 0, width, height};
+    SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, width + 1, height + 1,
+        Scale(14), Scale(14)), TRUE);
+  }
+  SetLayeredWindowAttributes(hwnd_, 0,
+      static_cast<BYTE>(std::lround(kOpacity * (std::clamp)(visible, 0.0, 1.0))),
+      LWA_ALPHA);
+}
+
+void QuickDropShelf::AnimationFrame() {
+  if (!hwnd_) return;
+  const ULONGLONG now = GetTickCount64();
+  bool done = visibility_.Done(now) && expand_.Done(now);
+  for (const auto& hover : hover_) done = done && hover.Done(now);
+  if (IsWindowVisible(hwnd_)) {
+    ApplyFrame();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+  if (!done) {
+    if (!animating_) {
+      // USER_TIMER_MINIMUM; the effective rate follows the system tick.
+      SetTimer(hwnd_, kAnimTimer, USER_TIMER_MINIMUM, nullptr);
+      animating_ = true;
+    }
+    return;
+  }
+  if (animating_) {
+    KillTimer(hwnd_, kAnimTimer);
+    animating_ = false;
+  }
+  if (state_ == State::hidden && IsWindowVisible(hwnd_)) Hide();
+}
+
+void QuickDropShelf::FinishAnimations() {
+  visibility_.Finish();
+  expand_.Finish();
+  for (auto& hover : hover_) hover.Finish();
+  AnimationFrame();
+}
+
+POINT QuickDropShelf::ContentOffset() const {
+  RECT client = {};
+  GetClientRect(hwnd_, &client);
+  return {(client.right - Scale(kExpandedWidth)) / 2,
+          client.bottom - Scale(kExpandedHeight)};
 }
 
 bool QuickDropShelf::IsAvailable(const std::string& id) const {
@@ -308,14 +463,18 @@ bool QuickDropShelf::IsAvailable(const std::string& id) const {
       [&](const QuickDropDevice& device) { return device.id == id; });
 }
 RECT QuickDropShelf::CardsClip() const {
-  return {Scale(28), Scale(8), Scale(kExpandedWidth - 28), Scale(108)};
+  const POINT offset = ContentOffset();
+  RECT clip = {Scale(28), Scale(8), Scale(kExpandedWidth - 28), Scale(108)};
+  OffsetRect(&clip, offset.x, offset.y);
+  return clip;
 }
 RECT QuickDropShelf::CardRect(int index) const {
   const int count = static_cast<int>(drag_devices_.size());
   const int start = count <= 4
       ? (kExpandedWidth - count * 80 - (count - 1) * 10) / 2 : 32;
-  const int left = Scale(start + index * 90 - scroll_x_);
-  return {left, Scale(12), left + Scale(80), Scale(104)};
+  const POINT offset = ContentOffset();
+  const int left = offset.x + Scale(start + index * 90 - scroll_x_);
+  return {left, offset.y + Scale(12), left + Scale(80), offset.y + Scale(104)};
 }
 int QuickDropShelf::MaxScroll() const {
   const int count = static_cast<int>(drag_devices_.size());
@@ -346,6 +505,9 @@ int QuickDropShelf::DropIndex(POINT point) const {
 void QuickDropShelf::ScrollToward(POINT point) {
   if (state_ != State::devices || MaxScroll() == 0) return;
   ScreenToClient(hwnd_, &point);
+  const POINT offset = ContentOffset();
+  point.x -= offset.x;
+  point.y -= offset.y;
   if (point.y < Scale(8) || point.y > Scale(108)) return;
   int next = scroll_x_;
   if (point.x < Scale(48)) next -= 8;
@@ -370,10 +532,16 @@ void QuickDropShelf::Paint() {
   HDC dc = CreateCompatibleDC(target);
   HBITMAP bitmap = CreateCompatibleBitmap(target, client.right, client.bottom);
   HGDIOBJ old_bitmap = SelectObject(dc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(39, 43, 47));
+  HBRUSH background = CreateSolidBrush(kBackground);
   FillRect(dc, &client, background);
   DeleteObject(background);
   SetBkMode(dc, TRANSPARENT);
+  const ULONGLONG now = GetTickCount64();
+  const double expand = expand_.Value(now);
+  // Device content fades in with the expansion so cards never pop.
+  const auto fade = [expand](COLORREF color) {
+    return MixColor(kBackground, color, (std::clamp)(expand, 0.0, 1.0));
+  };
   const int footer = client.bottom - Scale(kPromptHeight);
   HFONT body = UiFont(Scale(13));
   HGDIOBJ old_font = SelectObject(dc, body);
@@ -381,20 +549,20 @@ void QuickDropShelf::Paint() {
   DrawIconEx(dc, Scale(16), footer + Scale(16), app_icon_, Scale(20), Scale(20),
       0, nullptr, DI_NORMAL);
   RECT label = {Scale(48), footer, client.right - Scale(14), client.bottom};
-  const wchar_t* prompt = state_ == State::prompt
+  const wchar_t* prompt = expand < 0.5
       ? L"拖到这里，发送到其他设备" : L"拖到设备上松开，即可发送";
   if (drag_devices_.empty()) prompt = L"暂无在线设备，打开 LocalChat 配对";
   DrawTextW(dc, prompt, -1, &label,
       DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 
-  if (state_ == State::devices) {
+  if (expand > 0.01) {
     RECT divider = {Scale(16), footer, client.right - Scale(16), footer + 1};
-    HBRUSH line = CreateSolidBrush(RGB(65, 70, 75));
+    HBRUSH line = CreateSolidBrush(fade(RGB(65, 70, 75)));
     FillRect(dc, &divider, line);
     DeleteObject(line);
     if (drag_devices_.empty()) {
       RECT empty = {Scale(20), Scale(18), client.right - Scale(20), footer - Scale(8)};
-      SetTextColor(dc, RGB(162, 174, 183));
+      SetTextColor(dc, fade(RGB(162, 174, 183)));
       DrawTextW(dc, L"请先配对设备，并保持两端在线", -1, &empty,
           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
@@ -407,22 +575,26 @@ void QuickDropShelf::Paint() {
       const auto& device = drag_devices_[index];
       const bool available = IsAvailable(device.id);
       const RECT rect = CardRect(index);
-      if (index == hover_index_ && available) {
-        RoundFill(dc, rect, Scale(12), RGB(31, 120, 96));
+      const double hover = index < static_cast<int>(hover_.size())
+          ? hover_[index].Value(now) : 0.0;
+      if (available && hover > 0.01) {
+        RoundFill(dc, rect, Scale(12), fade(MixColor(kBackground, kHoverFill, hover)));
       }
       const int center = (rect.left + rect.right) / 2;
-      const RECT avatar = {center - Scale(18), rect.top + Scale(7),
-          center + Scale(18), rect.top + Scale(43)};
-      RoundFill(dc, avatar, Scale(14), available ? ColorFromHex(device.avatar_color)
-                                               : RGB(76, 81, 87));
+      // Avatar lifts slightly while hovered.
+      const int lift = static_cast<int>(std::lround(Scale(3) * hover));
+      const RECT avatar = {center - Scale(18), rect.top + Scale(7) - lift,
+          center + Scale(18), rect.top + Scale(43) - lift};
+      RoundFill(dc, avatar, Scale(14), fade(available ? ColorFromHex(device.avatar_color)
+                                                      : RGB(76, 81, 87)));
       SelectObject(dc, initial);
-      SetTextColor(dc, RGB(255, 255, 255));
+      SetTextColor(dc, fade(RGB(255, 255, 255)));
       RECT initial_rect = avatar;
       const std::wstring letter = Utf8ToWide(device.avatar_initial);
       DrawTextW(dc, letter.c_str(), -1, &initial_rect,
           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       SelectObject(dc, name);
-      SetTextColor(dc, available ? RGB(232, 237, 241) : RGB(133, 140, 146));
+      SetTextColor(dc, fade(available ? RGB(232, 237, 241) : RGB(133, 140, 146)));
       RECT text = {rect.left + Scale(3), rect.top + Scale(49),
           rect.right - Scale(3), rect.bottom};
       const std::wstring title = available ? Utf8ToWide(device.display_name) : L"设备已离线";
@@ -433,9 +605,12 @@ void QuickDropShelf::Paint() {
     DeleteObject(name);
     DeleteObject(initial);
     if (MaxScroll() > 0) {
-      SetTextColor(dc, RGB(172, 182, 190));
+      SetTextColor(dc, fade(RGB(172, 182, 190)));
+      const POINT offset = ContentOffset();
       RECT left = {Scale(5), Scale(24), Scale(25), Scale(88)};
       RECT right = {client.right - Scale(25), Scale(24), client.right - Scale(5), Scale(88)};
+      OffsetRect(&left, 0, offset.y);
+      OffsetRect(&right, 0, offset.y);
       if (scroll_x_ > 0) DrawTextW(dc, L"‹", -1, &left, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
       if (scroll_x_ < MaxScroll()) DrawTextW(dc, L"›", -1, &right, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
@@ -475,25 +650,23 @@ LRESULT QuickDropShelf::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
       return 0;
     }
     case WM_TIMER:
-      if (wparam == kEndTimer) { Hide(); return 0; }
+      if (wparam == kAnimTimer) { AnimationFrame(); return 0; }
+      if (wparam == kEndTimer) { BeginHide(); return 0; }
       if (wparam == kLeaveTimer) {
         KillTimer(hwnd, kLeaveTimer);
         if (!ole_drag_active_) {
           if (drag_monitor_.IsDragging()) SetExpanded(false);
-          else Hide();
+          else BeginHide();
         }
         return 0;
       }
       if (wparam == kWatchTimer && state_ != State::hidden) {
-        const ULONGLONG elapsed = (std::min)(GetTickCount64() - shown_at_, 120ULL);
-        SetLayeredWindowAttributes(hwnd, 0, static_cast<BYTE>(kOpacity * elapsed / 120), LWA_ALPHA);
         POINT cursor;
         GetCursorPos(&cursor);
         if (MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) != monitor_) Layout(cursor);
         if (ole_drag_active_) {
           ScrollToward(cursor);
-          hover_index_ = HitTest(cursor);
-          InvalidateRect(hwnd, nullptr, FALSE);
+          SetHover(HitTest(cursor));
         }
       }
       return 0;

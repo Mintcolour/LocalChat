@@ -32,7 +32,7 @@
 <p align="center">
   一个基于 Flutter 构建的局域网直连传输工具，用聊天窗口的方式在 Windows 和 Android 设备之间极速、安全、私密地发送文字、链接、图片、文件及文件夹。
   <br/>
-  不经过公网中转，不依赖第三方账号，拖动文件时可通过右下角自动出现的投递条快捷发送。
+  不经过公网中转，不依赖第三方账号，拖动文件时可通过屏幕底部中间自动出现的投递条快捷发送。
 </p>
 
 ---
@@ -47,7 +47,7 @@ LocalChat 不是云盘，也不是公网 IM。它专注于高频的本地场景�
 
 - **⚡ 局域网直连**: 自动通过 UDP 广播发现设备，使用高性能本地 HTTP 服务直连传输，速度仅受限于网络带宽。
 - **💬 聊天式体验**: 将文字、链接、图片、文件和文件夹统一落入聊天会话时间线，传输记录、状态与保存路径一目了然。
-- **💻 桌面端快捷拖拽 (Quick Drop Shelf)**: 从 Windows 桌面或资源管理器拖动文件时，右下角自动出现投递条；拖入后展开在线可信设备，松手即可发送。平时及取消拖动后自动隐藏。
+- **💻 桌面端快捷拖拽 (Quick Drop Shelf)**: 从 Windows 桌面或资源管理器拖动文件时，屏幕底部中间自动出现投递条；拖入后展开在线可信设备，松手即可发送。平时及取消拖动后自动隐藏。
 - **🔒 身份安全防护**: 采用 Ed25519 签名验证、X25519 密钥协商，并使用 AES-GCM 对文字和文件块进行端到端加密。
 - **🎨 统一核心逻辑**: 共享 Windows 和 Android 的业务底座，具备网络诊断、自定义存储路径等丰富功能。
 
@@ -90,7 +90,7 @@ LocalChat 不是云盘，也不是公网 IM。它专注于高频的本地场景�
 2. 在设备列表内找到目标，或手动输入 IP 与端口连接。
 3. 确认 6 位配对校验码以建立可信关系。
 4. 在会话中发文字、图片、拖拽文件或粘贴剪贴板即可完成投递！
-5. Windows 可在设置中开启“桌面快捷拖拽发送”，将桌面或资源管理器中的文件拖向右下角投递条，再投递到目标设备卡片。发送或取消拖动后，投递条会自动隐藏。
+5. Windows 可在设置中开启“桌面快捷拖拽发送”，将桌面或资源管理器中的文件拖向屏幕底部中间投递条，再投递到目标设备卡片。发送或取消拖动后，投递条会自动隐藏。
 
 ---
 
@@ -104,7 +104,7 @@ LocalChat is not a cloud drive or a public messenger. It is built for a common o
 
 - **⚡ Direct Transfer**: Discover peers via UDP broadcast and transfer files over local HTTP at maximum network speeds.
 - **💬 Timeline UI**: Message history, links, images, and files reside in a single conversation thread, keeping tracking clear.
-- **💻 Desktop Drag-Send (Quick Drop Shelf)**: Drag files from the Windows desktop or File Explorer to reveal a drop bar at the bottom right. Move onto it to expand online trusted devices, then drop on a device to send. It stays hidden between drags and disappears when a drag ends or is canceled.
+- **💻 Desktop Drag-Send (Quick Drop Shelf)**: Drag files from the Windows desktop or File Explorer to reveal a drop bar at the bottom center. Move onto it to expand online trusted devices, then drop on a device to send. It stays hidden between drags and disappears when a drag ends or is canceled.
 - **🔒 Secure Pairing**: Uses Ed25519 signatures, X25519 key exchange, and AES-GCM encryption for messages and file streams.
 - **🎨 Cross-Platform Core**: Sharing core code between Windows & Android with features like custom storage and network diagnostics.
 
@@ -146,7 +146,7 @@ LocalChat is not a cloud drive or a public messenger. It is built for a common o
 2. Select peer or enter manual IP and Port.
 3. Validate 6-digit code to pair.
 4. Drag & drop files or type text to send!
-5. On Windows, enable “Desktop quick drag-send” in Settings. Drag files from the desktop or File Explorer to the bottom-right drop bar, then drop onto a device card. The bar hides after sending or canceling the drag.
+5. On Windows, enable “Desktop quick drag-send” in Settings. Drag files from the desktop or File Explorer to the bottom-center drop bar, then drop onto a device card. The bar hides after sending or canceling the drag.
 
 ---
 

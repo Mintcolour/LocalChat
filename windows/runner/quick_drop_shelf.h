@@ -35,11 +35,36 @@ class QuickDropShelf {
   friend struct QuickDropShelfTestAccess;
   class DropTarget;
   enum class State { hidden, prompt, devices };
+  // Eased transition between two values; retargeting starts from the current
+  // value so reversing mid-flight never jumps.
+  struct Tween {
+    double from = 0;
+    double to = 0;
+    ULONGLONG start = 0;
+    double duration = 0;
+    double Value(ULONGLONG now) const;
+    bool Done(ULONGLONG now) const;
+    void Retarget(double target, double duration_ms, ULONGLONG now);
+    void Finish();
+  };
   bool Create(HWND owner);
   void ShowForDrag(POINT point);
+  // Hide() is immediate; BeginHide() logically hides at once, then fades out.
   void Hide();
+  void BeginHide();
   void SetExpanded(bool expanded);
+  void SetHover(int index);
   void Layout(POINT point);
+  void ApplyFrame();
+  // Applies the current tween values and keeps the frame timer running until
+  // every tween settles. Safe to call from any state change.
+  void AnimationFrame();
+  void FinishAnimations();
+  // Honors the system "show animations" accessibility setting.
+  double Duration(double milliseconds) const;
+  // Client-space origin of the fully expanded layout inside the current,
+  // possibly mid-animation, window.
+  POINT ContentOffset() const;
   void Paint();
   int Scale(int value) const;
   int HitTest(POINT point) const;
@@ -61,9 +86,15 @@ class QuickDropShelf {
   State state_ = State::hidden;
   UINT dpi_ = 96;
   HMONITOR monitor_ = nullptr;
+  RECT work_ = {};
+  RECT region_ = {};
   int scroll_x_ = 0;
   int hover_index_ = -1;
-  ULONGLONG shown_at_ = 0;
+  bool animate_ = true;
+  bool animating_ = false;
+  Tween visibility_;
+  Tween expand_;
+  std::vector<Tween> hover_;
   HICON app_icon_ = nullptr;
   IDropTarget* drop_target_ = nullptr;
   ShellDragMonitor drag_monitor_;

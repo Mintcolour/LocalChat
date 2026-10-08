@@ -158,7 +158,7 @@ class WindowService {
     }
   }
 
-  /// 设置桌面右下角按需显示的快捷拖拽发送开关。
+  /// 设置桌面屏幕底部中间按需显示的快捷拖拽发送开关。
   Future<void> setQuickSendEnabled(bool enabled) async {
     if (!isSupported) return;
     try {

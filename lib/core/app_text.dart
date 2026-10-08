@@ -270,8 +270,8 @@ class AppText {
       : 'Windows 启动时自动运行 LocalChat';
   String get quickSend => en ? 'Desktop quick drag-send' : '桌面快捷拖拽发送';
   String get quickSendSubtitle => en
-      ? 'Show a drop bar at the bottom right while dragging files from the desktop or File Explorer; move onto it to choose an online trusted device. Hidden otherwise.'
-      : '从桌面或资源管理器拖动文件时，右下角自动出现投递条；移入后选择在线可信设备发送，平时隐藏';
+      ? 'Show a drop bar at the bottom center while dragging files from the desktop or File Explorer; move onto it to choose an online trusted device. Hidden otherwise.'
+      : '从桌面或资源管理器拖动文件时，屏幕底部中间自动出现投递条；移入后选择在线可信设备发送，平时隐藏';
   String get quickSendEnabled =>
       en ? 'Desktop quick send enabled' : '已开启桌面快捷发送';
   String get quickSendDisabled =>

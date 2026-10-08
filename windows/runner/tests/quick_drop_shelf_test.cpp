@@ -4,6 +4,7 @@
 #include <shlobj.h>
 #include <wrl/client.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -20,10 +21,27 @@ struct QuickDropShelfTestAccess {
   static bool Expanded(const QuickDropShelf& shelf) {
     return shelf.state_ == QuickDropShelf::State::devices;
   }
-  static void Show(QuickDropShelf& shelf, POINT point) {
+  // Behavior checks run against settled frames; the preview modes keep the
+  // live animation.
+  static void Settle(QuickDropShelf& shelf) { shelf.FinishAnimations(); }
+  static bool Animated(const QuickDropShelf& shelf) { return shelf.animate_; }
+  static void ShowAnimated(QuickDropShelf& shelf, POINT point) {
     shelf.ShowForDrag(point);
   }
+  static void Show(QuickDropShelf& shelf, POINT point) {
+    shelf.ShowForDrag(point);
+    Settle(shelf);
+  }
   static void Hide(QuickDropShelf& shelf) { shelf.Hide(); }
+  static void BeginHide(QuickDropShelf& shelf) { shelf.BeginHide(); }
+  // Model the first hover frame, before any highlight intensity is visible.
+  // Pin its value to zero so immediate release is deterministic, independent
+  // of the machine's tick resolution and scheduler.
+  static void PrepareImmediateRelease(QuickDropShelf& shelf, int index) {
+    shelf.animate_ = true;
+    shelf.SetHover(index);
+    shelf.hover_[index] = {};
+  }
   static void Expand(QuickDropShelf& shelf) { shelf.SetExpanded(true); }
   static void StopMonitor(QuickDropShelf& shelf) { shelf.drag_monitor_.Stop(); }
   static int Scale(const QuickDropShelf& shelf, int value) {
@@ -188,12 +206,14 @@ DWORD Enter(QuickDropShelf& shelf, IDataObject* object,
   DWORD effect = allowed;
   Access::Target(shelf)->DragEnter(object, MK_LBUTTON,
                                    OlePoint(Access::Footer(shelf)), &effect);
+  Access::Settle(shelf);
   return effect;
 }
 
 DWORD Drop(QuickDropShelf& shelf, IDataObject* object, POINT point) {
   DWORD effect = DROPEFFECT_COPY;
   Access::Target(shelf)->Drop(object, 0, OlePoint(point), &effect);
+  Access::Settle(shelf);
   return effect;
 }
 
@@ -243,9 +263,11 @@ int RunChecks() {
   GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &monitor);
   RECT bounds = {};
   GetWindowRect(Access::Window(shelf), &bounds);
-  checks.Expect(bounds.right == monitor.rcWork.right - Access::Scale(shelf, 16) &&
-                    bounds.bottom == monitor.rcWork.bottom - Access::Scale(shelf, 16),
-                "hint is anchored at the current work area's bottom right");
+  const LONG shelf_center = (bounds.left + bounds.right) / 2;
+  const LONG work_center = (monitor.rcWork.left + monitor.rcWork.right) / 2;
+  checks.Expect(std::abs(shelf_center - work_center) <= 1 &&
+                    bounds.bottom == monitor.rcWork.bottom - Access::Scale(shelf, 28),
+                "hint is anchored at the current work area's bottom center");
 
   struct Received {
     std::string device;
@@ -296,6 +318,29 @@ int RunChecks() {
                         u8"C:\\资料\\多行 报告.pdf", "D:\\work files\\image.png"},
                 "callback preserves both Unicode and spaced file paths");
   checks.Expect(Access::Hidden(shelf), "successful drop hides the panel");
+
+  reset(devices);
+  Enter(shelf, files.Get());
+  Access::BeginHide(shelf);
+  checks.Expect(!Access::Animated(shelf) ||
+                    IsWindowVisible(Access::Window(shelf)) != FALSE,
+                "hiding fades out instead of disappearing at once");
+  checks.Expect(Drop(shelf, files.Get(), Access::Card(shelf, 1)) == DROPEFFECT_NONE &&
+                    received.size() == 1,
+                "a fading panel no longer accepts drops");
+  checks.Expect(Access::Hidden(shelf), "fade-out ends with the panel hidden");
+
+  reset(devices);
+  Enter(shelf, files.Get());
+  Access::PrepareImmediateRelease(shelf, 1);
+  Access::BeginHide(shelf);
+  checks.Expect(IsWindowVisible(Access::Window(shelf)) != FALSE,
+                "immediate release on the first hover frame preserves fade-out");
+  checks.Expect(Access::DropIndex(shelf, Access::Card(shelf, 1)) == -1,
+                "immediate release disables drops while the fade is visible");
+  Access::Settle(shelf);
+  checks.Expect(Access::Hidden(shelf),
+                "immediate-release fade completes and hides the panel");
 
   reset({devices.front()});
   Enter(shelf, files.Get());
@@ -397,7 +442,7 @@ int RunInteractive(const std::wstring& mode) {
     Access::StopMonitor(shelf);
     POINT cursor = {};
     GetCursorPos(&cursor);
-    Access::Show(shelf, cursor);
+    Access::ShowAnimated(shelf, cursor);
     if (mode == L"--preview-expanded") Access::Expand(shelf);
   }
   std::cout << (mode == L"--observe" ? "Observing Shell file drag gestures.\n"

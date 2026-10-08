@@ -25,9 +25,13 @@ class QuickDropShelf {
   QuickDropShelf();
   ~QuickDropShelf();
   void SetDropCallback(DropCallback callback);
-  void SetEnabled(bool enabled, HWND owner);
+  bool SetEnabled(bool enabled, HWND owner);
   void UpdateDevices(std::vector<QuickDropDevice> devices);
   void Destroy();
+  ShellDragDiagnostics GetDiagnostics() const;
+  bool IsEnabled() const { return enabled_; }
+  bool IsVisible() const { return hwnd_ && IsWindowVisible(hwnd_) != FALSE; }
+  unsigned long long ShownCount() const { return shown_count_; }
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam,
                                   LPARAM lparam);
 
@@ -65,6 +69,7 @@ class QuickDropShelf {
   // Client-space origin of the fully expanded layout inside the current,
   // possibly mid-animation, window.
   POINT ContentOffset() const;
+  int ExpandedWidth() const;
   void Paint();
   int Scale(int value) const;
   int HitTest(POINT point) const;
@@ -80,6 +85,7 @@ class QuickDropShelf {
   HWND hwnd_ = nullptr;
   HWND owner_ = nullptr;
   bool enabled_ = false;
+  unsigned long long shown_count_ = 0;
   bool ole_initialized_ = false;
   bool ole_drag_active_ = false;
   bool laying_out_ = false;

@@ -276,6 +276,17 @@ class AppText {
       en ? 'Desktop quick send enabled' : '已开启桌面快捷发送';
   String get quickSendDisabled =>
       en ? 'Desktop quick send disabled' : '已关闭桌面快捷发送';
+  String get quickSendUnavailable => en
+      ? 'Windows file drag detection could not start. Toggle desktop quick drag-send in Settings to retry.'
+      : 'Windows 文件拖拽检测启动失败，请在设置中重新开启桌面快捷拖拽发送';
+  String get quickSendDiagnostics => en ? 'File drag diagnostics' : '拖拽检测诊断';
+  String get quickSendDiagnosticsHint => en
+      ? 'Drag a file from the desktop or File Explorer for two seconds, release it, then copy this report.'
+      : '从桌面或资源管理器拖动文件并保持两秒，松手后点击“复制诊断”。';
+  String get quickSendCopyDiagnostics => en ? 'Copy diagnostics' : '复制诊断';
+  String get quickSendDiagnosticsUnavailable => en
+      ? 'This program does not provide drag diagnostics. Run the EXE from the new extracted package.'
+      : '当前程序没有拖拽诊断接口，请确认运行的是新包解压后的 EXE。';
   String get storageRootPath => en ? 'Default storage path' : '默认存储路径';
   String storageRootPathSubtitle(String path) =>
       en ? 'Received files are saved to:\n$path' : '收到的文件会保存到：\n$path';

@@ -268,6 +268,9 @@ int RunChecks() {
   checks.Expect(std::abs(shelf_center - work_center) <= 1 &&
                     bounds.bottom == monitor.rcWork.bottom - Access::Scale(shelf, 28),
                 "hint is anchored at the current work area's bottom center");
+  checks.Expect(bounds.right - bounds.left == Access::Scale(shelf, 244) &&
+                    bounds.bottom - bounds.top == Access::Scale(shelf, 44),
+                "drag prompt stays compact at the active monitor DPI");
 
   struct Received {
     std::string device;
@@ -309,6 +312,10 @@ int RunChecks() {
   reset(devices);
   Enter(shelf, files.Get());
   checks.Expect(Access::Expanded(shelf), "CF_HDROP expands the device panel");
+  GetWindowRect(Access::Window(shelf), &bounds);
+  checks.Expect(bounds.right - bounds.left == Access::Scale(shelf, 280) &&
+                    bounds.bottom - bounds.top == Access::Scale(shelf, 132),
+                "three devices fit the compact expanded panel");
   checks.Expect(GetForegroundWindow() == foreground,
                 "expanding does not activate the panel");
   checks.Expect(Drop(shelf, files.Get(), Access::Card(shelf, 1)) == DROPEFFECT_COPY,
@@ -394,16 +401,18 @@ int RunChecks() {
   Enter(shelf, files.Get());
   Access::SetScroll(shelf, 20);
   checks.Expect(Access::Hit(shelf, Access::ScreenPoint(shelf, 20, 50)) == -1 &&
-                    Access::Hit(shelf, Access::ScreenPoint(shelf, 400, 50)) == -1,
+                    Access::Hit(shelf, Access::ScreenPoint(shelf, 260, 50)) == -1,
                 "clipped card edges cannot receive drops");
   checks.Expect(Access::Hit(shelf, Access::ScreenPoint(shelf, 29, 50)) == 0,
                 "visible portion of a partially clipped card remains usable");
   for (int count = 0; count < 200; ++count) {
-    Access::ScrollToward(shelf, Access::ScreenPoint(shelf, 405, 50));
+    Access::ScrollToward(shelf, Access::ScreenPoint(shelf, 265, 50));
   }
   checks.Expect(Access::Scroll(shelf) == Access::MaxScroll(shelf),
                 "right edge scrolling stops at the content boundary");
-  Access::ScrollToward(shelf, Access::ScreenPoint(shelf, 15, 145));
+  checks.Expect(Access::Hit(shelf, Access::Card(shelf, 6)) == 6,
+                "last recipient is reachable after scrolling the compact panel");
+  Access::ScrollToward(shelf, Access::ScreenPoint(shelf, 15, 110));
   checks.Expect(Access::Scroll(shelf) == Access::MaxScroll(shelf),
                 "footer movement does not scroll recipients");
   for (int count = 0; count < 200; ++count) {

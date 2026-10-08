@@ -34,6 +34,7 @@ class SettingsController extends ChangeNotifier {
   bool trayEnabled = true;
   bool autostartEnabled = false;
   bool quickSendEnabled = false;
+  Object? quickSendStartupError;
   bool notificationsEnabled = true;
   bool notificationPreviewEnabled = false;
   bool keepAliveEnabled = Platform.isAndroid;
@@ -146,9 +147,11 @@ class SettingsController extends ChangeNotifier {
   }
 
   Future<void> setQuickSendEnabled(bool value) async {
+    // Publish success only after the native monitor is actually running.
+    await windowService.setQuickSendEnabled(value);
+    quickSendStartupError = null;
     quickSendEnabled = value;
     await db.setSetting(_quickSendEnabledKey, value ? 'true' : 'false');
-    await windowService.setQuickSendEnabled(value);
   }
 
   /// 读取托盘/开机自启偏好，并与原生状态同步。仅 Windows 生效。
@@ -164,6 +167,13 @@ class SettingsController extends ChangeNotifier {
       await windowService.setAutostartEnabled(autostartEnabled);
     }
     await windowService.setTrayEnabled(trayEnabled);
-    await windowService.setQuickSendEnabled(quickSendEnabled);
+    try {
+      await windowService.setQuickSendEnabled(quickSendEnabled);
+      quickSendStartupError = null;
+    } catch (error) {
+      // Keep the saved preference for a later retry, but display actual state.
+      quickSendStartupError = error;
+      quickSendEnabled = false;
+    }
   }
 }

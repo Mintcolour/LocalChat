@@ -386,13 +386,65 @@ bool FlutterWindow::OnCreate() {
               enabled = BoolFromMap(*map, "enabled");
             }
           }
-          quick_drop_shelf_.SetEnabled(enabled, GetHandle());
+          if (!quick_drop_shelf_.SetEnabled(enabled, GetHandle())) {
+            result->Error("quick_send_start_failed",
+                          "Could not start Windows file drag detection.");
+            return;
+          }
           result->Success();
           return;
         }
         if (method == "updateQuickSendDevices") {
           quick_drop_shelf_.UpdateDevices(ParseQuickDropDevices(call.arguments()));
           result->Success();
+          return;
+        }
+        if (method == "getQuickSendDiagnostics") {
+          const auto diagnostic = quick_drop_shelf_.GetDiagnostics();
+          flutter::EncodableMap map;
+          const auto put = [&](const char* key, flutter::EncodableValue value) {
+            map[flutter::EncodableValue(key)] = std::move(value);
+          };
+          put("build", flutter::EncodableValue("drag-explorer-compact-v4"));
+          put("enabled", flutter::EncodableValue(quick_drop_shelf_.IsEnabled()));
+          put("monitorRunning", flutter::EncodableValue(diagnostic.running));
+          put("uiaAvailable", flutter::EncodableValue(diagnostic.uia_available));
+          put("panelVisible", flutter::EncodableValue(quick_drop_shelf_.IsVisible()));
+          put("buttonsSwapped", flutter::EncodableValue(GetSystemMetrics(SM_SWAPBUTTON) != 0));
+          put("mouseEvents", flutter::EncodableValue(static_cast<int64_t>(diagnostic.mouse_events)));
+          put("mousePresses", flutter::EncodableValue(static_cast<int64_t>(diagnostic.mouse_presses)));
+          put("dragThresholds", flutter::EncodableValue(static_cast<int64_t>(diagnostic.drag_thresholds)));
+          put("probesStarted", flutter::EncodableValue(static_cast<int64_t>(diagnostic.probes_started)));
+          put("probesCompleted", flutter::EncodableValue(static_cast<int64_t>(diagnostic.probes_completed)));
+          put("resultsApplied", flutter::EncodableValue(static_cast<int64_t>(diagnostic.results_applied)));
+          put("dragsAccepted", flutter::EncodableValue(static_cast<int64_t>(diagnostic.drags_accepted)));
+          put("timerTicks", flutter::EncodableValue(static_cast<int64_t>(diagnostic.timer_ticks)));
+          put("probePending", flutter::EncodableValue(diagnostic.probe_pending));
+          put("shownCount", flutter::EncodableValue(static_cast<int64_t>(quick_drop_shelf_.ShownCount())));
+          flutter::EncodableList probes;
+          for (const auto& probe : diagnostic.recent_probes) {
+            flutter::EncodableMap item;
+            item[flutter::EncodableValue("sourceClass")] = flutter::EncodableValue(probe.source_class);
+            item[flutter::EncodableValue("ancestors")] = flutter::EncodableValue(probe.ancestor_classes);
+            item[flutter::EncodableValue("decision")] = flutter::EncodableValue(probe.decision);
+            item[flutter::EncodableValue("nativeListView")] = flutter::EncodableValue(probe.native_list_view);
+            item[flutter::EncodableValue("nativeQuery")] = flutter::EncodableValue(probe.native_query);
+            item[flutter::EncodableValue("nativeItemIndex")] = flutter::EncodableValue(probe.native_item_index);
+            item[flutter::EncodableValue("nativeHitFlags")] = flutter::EncodableValue(static_cast<int64_t>(probe.native_hit_flags));
+            item[flutter::EncodableValue("nativeScreenPoint")] = flutter::EncodableValue(flutter::EncodableList{flutter::EncodableValue(probe.native_screen_point.x), flutter::EncodableValue(probe.native_screen_point.y)});
+            item[flutter::EncodableValue("nativeClientPoint")] = flutter::EncodableValue(flutter::EncodableList{flutter::EncodableValue(probe.native_client_point.x), flutter::EncodableValue(probe.native_client_point.y)});
+            item[flutter::EncodableValue("nativeClientSize")] = flutter::EncodableValue(flutter::EncodableList{flutter::EncodableValue(probe.native_client_size.cx), flutter::EncodableValue(probe.native_client_size.cy)});
+            item[flutter::EncodableValue("nativeListViewResult")] = flutter::EncodableValue(static_cast<int64_t>(probe.native_list_view_result));
+            item[flutter::EncodableValue("probeMs")] = flutter::EncodableValue(static_cast<int64_t>(probe.probe_ms));
+            item[flutter::EncodableValue("sourceProcess")] = flutter::EncodableValue(static_cast<int64_t>(probe.source_process));
+            item[flutter::EncodableValue("uiaProcess")] = flutter::EncodableValue(probe.uia_process);
+            item[flutter::EncodableValue("uiaSourceDecision")] = flutter::EncodableValue(probe.uia_source_decision);
+            item[flutter::EncodableValue("uiaCandidates")] = flutter::EncodableValue(probe.uia_candidates);
+            item[flutter::EncodableValue("uiaPropertyResult")] = flutter::EncodableValue(static_cast<int64_t>(probe.uia_property_result));
+            probes.emplace_back(std::move(item));
+          }
+          put("recentProbes", flutter::EncodableValue(probes));
+          result->Success(flutter::EncodableValue(map));
           return;
         }
         result->NotImplemented();

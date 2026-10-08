@@ -5,6 +5,7 @@
 
 int wmain() {
   ShellDragMonitor monitor;
+  if (monitor.GetDiagnostics().running) return 1;
   if (monitor.IsDragging() || monitor.Start(nullptr, WM_APP + 1)) return 1;
   monitor.Stop();
   monitor.Stop();
@@ -24,11 +25,12 @@ int wmain() {
   bool passed = true;
   for (int index = 0; index < 5 && passed; ++index) {
     passed = monitor.Start(receiver, WM_APP + 1);
+    passed = passed && monitor.GetDiagnostics().running;
     // Restart while enabled exercises hook/worker cleanup before replacement.
     if (passed) passed = monitor.Start(receiver, WM_APP + 1);
     monitor.Stop();
     monitor.Stop();
-    passed = passed && !monitor.IsDragging();
+    passed = passed && !monitor.IsDragging() && !monitor.GetDiagnostics().running;
   }
   DestroyWindow(receiver);
   const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(

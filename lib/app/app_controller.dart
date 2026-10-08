@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -349,6 +350,13 @@ class AppController extends ChangeNotifier {
         });
       } else {
         status = networkHealth.startupNetworkStatus(port);
+      }
+      final quickSendError = settings.quickSendStartupError;
+      if (quickSendError != null) {
+        _logger.error('window.quick_send_start_failed', quickSendError);
+        status = text.quickSendUnavailable;
+        notificationText = status;
+        notificationSerial++;
       }
       _logger.info('app.initialize_completed', {
         'transportPort': port,
@@ -1038,7 +1046,15 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setQuickSendEnabled(bool value) async {
-    await settings.setQuickSendEnabled(value);
+    try {
+      await settings.setQuickSendEnabled(value);
+    } catch (error, stackTrace) {
+      _logger.error('window.quick_send_start_failed', error, stackTrace);
+      status = text.quickSendUnavailable;
+      lastError = text.quickSendUnavailable;
+      notifyListeners();
+      return;
+    }
     await _syncQuickSendDevices();
     status = value ? text.quickSendEnabled : text.quickSendDisabled;
     notifyListeners();
@@ -1678,10 +1694,17 @@ class AppController extends ChangeNotifier {
     );
   }
 
+  Future<Map<String, Object?>> loadQuickSendDiagnostics() =>
+      windowService.getQuickSendDiagnostics();
+
   Future<String?> exportDiagnosticReport() async {
-    final path = await networkHealth.exportDiagnosticReport(
-      buildDiagnosticSummary(),
-    );
+    var summary = buildDiagnosticSummary();
+    if (Platform.isWindows) {
+      final drag = await loadQuickSendDiagnostics();
+      _logger.info('window.quick_send_diagnostics', drag);
+      summary += '\n\nDesktop drag diagnostics:\n${jsonEncode(drag)}';
+    }
+    final path = await networkHealth.exportDiagnosticReport(summary);
     if (path != null) {
       status = text.diagnosticLogsExported;
       notifyListeners();

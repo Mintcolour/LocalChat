@@ -15,10 +15,13 @@ constexpr UINT_PTR kWatchTimer = 1;
 constexpr UINT_PTR kEndTimer = 2;
 constexpr UINT_PTR kLeaveTimer = 3;
 constexpr UINT_PTR kAnimTimer = 4;
-constexpr int kPromptWidth = 360;
-constexpr int kExpandedWidth = 420;
-constexpr int kPromptHeight = 52;
-constexpr int kExpandedHeight = 168;
+constexpr int kPromptWidth = 244;
+constexpr int kPromptHeight = 44;
+constexpr int kExpandedHeight = 132;
+constexpr int kCardWidth = 72;
+constexpr int kCardGap = 8;
+constexpr int kSideMargin = 24;
+constexpr int kVisibleCards = 3;
 constexpr int kBottomMargin = 28;
 constexpr int kSlideDistance = 18;
 constexpr BYTE kOpacity = 248;
@@ -190,22 +193,26 @@ class QuickDropShelf::DropTarget : public IDropTarget {
 
 QuickDropShelf::QuickDropShelf() = default;
 QuickDropShelf::~QuickDropShelf() { Destroy(); }
+ShellDragDiagnostics QuickDropShelf::GetDiagnostics() const {
+  return drag_monitor_.GetDiagnostics();
+}
 void QuickDropShelf::SetDropCallback(DropCallback callback) {
   drop_callback_ = std::move(callback);
 }
 
-void QuickDropShelf::SetEnabled(bool enabled, HWND owner) {
+bool QuickDropShelf::SetEnabled(bool enabled, HWND owner) {
   owner_ = owner;
-  if (enabled == enabled_) return;
+  if (enabled == enabled_) return true;
   if (!enabled) {
     enabled_ = false;
     drag_monitor_.Stop();
     Hide();
-    return;
+    return true;
   }
-  if (!hwnd_ && !Create(owner)) return;
+  if (!hwnd_ && !Create(owner)) return false;
   enabled_ = drag_monitor_.Start(hwnd_, kDragChanged);
   // Remain invisible until a Shell item drag has been observed.
+  return enabled_;
 }
 
 bool QuickDropShelf::Create(HWND owner) {
@@ -293,6 +300,7 @@ void QuickDropShelf::ShowForDrag(POINT point) {
   if (!enabled_ || !hwnd_) return;
   KillTimer(hwnd_, kEndTimer);
   if (state_ != State::hidden) return;
+  ++shown_count_;
   BOOL animations = TRUE;
   SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
   animate_ = animations != FALSE;
@@ -402,7 +410,7 @@ void QuickDropShelf::ApplyFrame() {
   const auto mix = [expand](int prompt, int expanded) {
     return static_cast<int>(std::lround(prompt + (expanded - prompt) * expand));
   };
-  const int width = Scale(mix(kPromptWidth, kExpandedWidth));
+  const int width = Scale(mix(kPromptWidth, ExpandedWidth()));
   const int height = Scale(mix(kPromptHeight, kExpandedHeight));
   // Bottom-centered on the work area; grows upward and slides in from below.
   const int x = work_.left + ((work_.right - work_.left) - width) / 2;
@@ -454,8 +462,14 @@ void QuickDropShelf::FinishAnimations() {
 POINT QuickDropShelf::ContentOffset() const {
   RECT client = {};
   GetClientRect(hwnd_, &client);
-  return {(client.right - Scale(kExpandedWidth)) / 2,
+  return {(client.right - Scale(ExpandedWidth())) / 2,
           client.bottom - Scale(kExpandedHeight)};
+}
+
+int QuickDropShelf::ExpandedWidth() const {
+  const int visible = (std::clamp)(static_cast<int>(drag_devices_.size()), 1, kVisibleCards);
+  return (std::max)(kPromptWidth,
+      visible * kCardWidth + (visible - 1) * kCardGap + 2 * kSideMargin);
 }
 
 bool QuickDropShelf::IsAvailable(const std::string& id) const {
@@ -464,21 +478,22 @@ bool QuickDropShelf::IsAvailable(const std::string& id) const {
 }
 RECT QuickDropShelf::CardsClip() const {
   const POINT offset = ContentOffset();
-  RECT clip = {Scale(28), Scale(8), Scale(kExpandedWidth - 28), Scale(108)};
+  RECT clip = {Scale(kSideMargin), Scale(8), Scale(ExpandedWidth() - kSideMargin), Scale(88)};
   OffsetRect(&clip, offset.x, offset.y);
   return clip;
 }
 RECT QuickDropShelf::CardRect(int index) const {
   const int count = static_cast<int>(drag_devices_.size());
-  const int start = count <= 4
-      ? (kExpandedWidth - count * 80 - (count - 1) * 10) / 2 : 32;
+  const int start = count <= kVisibleCards
+      ? (ExpandedWidth() - count * kCardWidth - (count - 1) * kCardGap) / 2 : kSideMargin;
   const POINT offset = ContentOffset();
-  const int left = offset.x + Scale(start + index * 90 - scroll_x_);
-  return {left, offset.y + Scale(12), left + Scale(80), offset.y + Scale(104)};
+  const int left = offset.x + Scale(start + index * (kCardWidth + kCardGap) - scroll_x_);
+  return {left, offset.y + Scale(8), left + Scale(kCardWidth), offset.y + Scale(84)};
 }
 int QuickDropShelf::MaxScroll() const {
   const int count = static_cast<int>(drag_devices_.size());
-  return count <= 4 ? 0 : (std::max)(0, count * 80 + (count - 1) * 10 - 356);
+  return count <= kVisibleCards ? 0 : (std::max)(0,
+      count * kCardWidth + (count - 1) * kCardGap - (ExpandedWidth() - 2 * kSideMargin));
 }
 int QuickDropShelf::HitTest(POINT point) const {
   if (state_ != State::devices) return -1;
@@ -508,10 +523,10 @@ void QuickDropShelf::ScrollToward(POINT point) {
   const POINT offset = ContentOffset();
   point.x -= offset.x;
   point.y -= offset.y;
-  if (point.y < Scale(8) || point.y > Scale(108)) return;
+  if (point.y < Scale(8) || point.y > Scale(88)) return;
   int next = scroll_x_;
-  if (point.x < Scale(48)) next -= 8;
-  if (point.x > Scale(kExpandedWidth - 48)) next += 8;
+  if (point.x < Scale(40)) next -= 8;
+  if (point.x > Scale(ExpandedWidth() - 40)) next += 8;
   next = (std::clamp)(next, 0, MaxScroll());
   if (next != scroll_x_) {
     scroll_x_ = next;
@@ -546,12 +561,12 @@ void QuickDropShelf::Paint() {
   HFONT body = UiFont(Scale(13));
   HGDIOBJ old_font = SelectObject(dc, body);
   SetTextColor(dc, RGB(232, 237, 241));
-  DrawIconEx(dc, Scale(16), footer + Scale(16), app_icon_, Scale(20), Scale(20),
+  DrawIconEx(dc, Scale(14), footer + Scale(13), app_icon_, Scale(18), Scale(18),
       0, nullptr, DI_NORMAL);
-  RECT label = {Scale(48), footer, client.right - Scale(14), client.bottom};
+  RECT label = {Scale(42), footer, client.right - Scale(12), client.bottom};
   const wchar_t* prompt = expand < 0.5
-      ? L"拖到这里，发送到其他设备" : L"拖到设备上松开，即可发送";
-  if (drag_devices_.empty()) prompt = L"暂无在线设备，打开 LocalChat 配对";
+      ? L"拖到这里，发送文件" : L"松开即可发送";
+  if (drag_devices_.empty()) prompt = L"暂无在线设备";
   DrawTextW(dc, prompt, -1, &label,
       DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 
@@ -583,8 +598,8 @@ void QuickDropShelf::Paint() {
       const int center = (rect.left + rect.right) / 2;
       // Avatar lifts slightly while hovered.
       const int lift = static_cast<int>(std::lround(Scale(3) * hover));
-      const RECT avatar = {center - Scale(18), rect.top + Scale(7) - lift,
-          center + Scale(18), rect.top + Scale(43) - lift};
+      const RECT avatar = {center - Scale(16), rect.top + Scale(6) - lift,
+          center + Scale(16), rect.top + Scale(38) - lift};
       RoundFill(dc, avatar, Scale(14), fade(available ? ColorFromHex(device.avatar_color)
                                                       : RGB(76, 81, 87)));
       SelectObject(dc, initial);
@@ -595,7 +610,7 @@ void QuickDropShelf::Paint() {
           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       SelectObject(dc, name);
       SetTextColor(dc, fade(available ? RGB(232, 237, 241) : RGB(133, 140, 146)));
-      RECT text = {rect.left + Scale(3), rect.top + Scale(49),
+      RECT text = {rect.left + Scale(3), rect.top + Scale(43),
           rect.right - Scale(3), rect.bottom};
       const std::wstring title = available ? Utf8ToWide(device.display_name) : L"设备已离线";
       DrawTextW(dc, title.c_str(), -1, &text,
@@ -607,8 +622,8 @@ void QuickDropShelf::Paint() {
     if (MaxScroll() > 0) {
       SetTextColor(dc, fade(RGB(172, 182, 190)));
       const POINT offset = ContentOffset();
-      RECT left = {Scale(5), Scale(24), Scale(25), Scale(88)};
-      RECT right = {client.right - Scale(25), Scale(24), client.right - Scale(5), Scale(88)};
+      RECT left = {Scale(3), Scale(16), Scale(21), Scale(76)};
+      RECT right = {client.right - Scale(21), Scale(16), client.right - Scale(3), Scale(76)};
       OffsetRect(&left, 0, offset.y);
       OffsetRect(&right, 0, offset.y);
       if (scroll_x_ > 0) DrawTextW(dc, L"‹", -1, &left, DT_CENTER | DT_VCENTER | DT_SINGLELINE);

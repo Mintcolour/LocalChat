@@ -1,4 +1,5 @@
 import 'package:drift/native.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:localchat/app/app_controller.dart';
 import 'package:localchat/app/settings_controller.dart';
@@ -14,6 +15,18 @@ class _NoopWindowService extends WindowService {
   const _NoopWindowService();
   @override
   bool get isSupported => false;
+}
+
+class _FailingDragWindowService extends WindowService {
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<void> setQuickSendEnabled(bool enabled) async {
+    if (enabled) {
+      throw PlatformException(code: 'quick_send_start_failed');
+    }
+  }
 }
 
 class _FakeKeepAliveService extends AndroidKeepAliveService {
@@ -63,6 +76,44 @@ class _CountingUpdateCheckService extends UpdateCheckService {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'failed native monitor enable does not report success or save enabled',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final settings = SettingsController(
+        db: db,
+        windowService: _FailingDragWindowService(),
+      );
+      await expectLater(
+        settings.setQuickSendEnabled(true),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(settings.quickSendEnabled, isFalse);
+      expect(await db.getSetting('quick_send_enabled'), isNull);
+    },
+  );
+
+  test(
+    'startup monitor failure exposes actual disabled state and preserves retry preference',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await db.setSetting('quick_send_enabled', 'true');
+      final settings = SettingsController(
+        db: db,
+        windowService: _FailingDragWindowService(),
+      );
+      await settings.load();
+      expect(settings.quickSendEnabled, isFalse);
+      expect(settings.quickSendStartupError, isA<PlatformException>());
+      expect(await db.getSetting('quick_send_enabled'), 'true');
+      await settings.setQuickSendEnabled(false);
+      expect(settings.quickSendStartupError, isNull);
+    },
+  );
   test('SettingsController persists and reloads preferences', () async {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);

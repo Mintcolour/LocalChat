@@ -9,6 +9,7 @@ import 'package:localchat/ui/dialogs/about_dialog.dart';
 import 'package:localchat/ui/dialogs/add_peer_dialog.dart';
 import 'package:localchat/ui/dialogs/network_diagnostics_dialog.dart';
 import 'package:localchat/ui/dialogs/peer_dialogs.dart';
+import 'package:localchat/ui/dialogs/quick_send_diagnostics_dialog.dart';
 
 Future<void> showSettingsDialog(
   BuildContext context,
@@ -197,6 +198,14 @@ Future<void> showSettingsDialog(
                   subtitle: Text(controller.text.quickSendSubtitle),
                   value: controller.quickSendEnabled,
                   onChanged: controller.setQuickSendEnabled,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: Text(controller.text.quickSendDiagnostics),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      showQuickSendDiagnosticsDialog(context, controller),
                 ),
               ],
               ListTile(

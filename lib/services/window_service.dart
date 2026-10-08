@@ -167,10 +167,23 @@ class WindowService {
       });
     } on MissingPluginException {
       // ignore
-    } on PlatformException {
-      // ignore
-    } catch (_) {
-      // ignore
+    }
+  }
+
+  /// 读取检测计数和窗口类名，不读取拖动文件的名称或内容。
+  Future<Map<String, Object?>> getQuickSendDiagnostics() async {
+    if (!isSupported) {
+      return {'available': false, 'error': 'unsupported_platform'};
+    }
+    try {
+      final snapshot = await _channel.invokeMapMethod<String, Object?>(
+        'getQuickSendDiagnostics',
+      );
+      return {'available': snapshot != null, ...?snapshot};
+    } on MissingPluginException {
+      return {'available': false, 'error': 'diagnostics_not_available'};
+    } on PlatformException catch (error) {
+      return {'available': false, 'error': error.code};
     }
   }
 

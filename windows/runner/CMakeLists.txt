@@ -14,6 +14,8 @@ add_executable(${BINARY_NAME} WIN32
   "main.cpp"
   "quick_drop_shelf.cpp"
   "shell_drag_monitor.cpp"
+  "shell_item_probe.cpp"
+  "shell_uia_probe.cpp"
   "tray.cpp"
   "utils.cpp"
   "win32_window.cpp"
@@ -48,6 +50,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "oleaut32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "shell32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "oleacc.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

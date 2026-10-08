@@ -63,6 +63,8 @@ jobs:
         run: ./scripts/build_windows.ps1
       - name: Verify compiled CLI with encrypted transport
         run: flutter test --no-pub test/automation_service_test.dart
+      - name: Test Windows firewall diagnostics UI
+        run: flutter test --no-pub test/network_diagnostic_widget_test.dart
       - name: Test native descriptor permissions
         shell: pwsh
         run: |

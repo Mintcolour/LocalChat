@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -61,52 +62,54 @@ void main() {
     },
   );
 
-  testWidgets('network diagnostics exposes firewall repair and status', (
-    tester,
-  ) async {
-    final firewall = _PendingFirewallService();
-    final controller = AppController(
-      database: AppDatabase(NativeDatabase.memory()),
-      windowsFirewallService: firewall,
-    );
-    addTearDown(controller.dispose);
+  testWidgets(
+    'network diagnostics exposes firewall repair and status',
+    (tester) async {
+      final firewall = _PendingFirewallService();
+      final controller = AppController(
+        database: AppDatabase(NativeDatabase.memory()),
+        windowsFirewallService: firewall,
+      );
+      addTearDown(controller.dispose);
 
-    await tester.pumpWidget(LocalChatApp(controller: controller));
-    await tester.tap(find.byTooltip(controller.text.settings));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(LocalChatApp(controller: controller));
+      await tester.tap(find.byTooltip(controller.text.settings));
+      await tester.pumpAndSettle();
 
-    final diagnostics = find.text(controller.text.networkDiagnosticsAndLogs);
-    await tester.ensureVisible(diagnostics.first);
-    await tester.tap(diagnostics.first);
-    await tester.pumpAndSettle();
+      final diagnostics = find.text(controller.text.networkDiagnosticsAndLogs);
+      await tester.ensureVisible(diagnostics.first);
+      await tester.tap(diagnostics.first);
+      await tester.pumpAndSettle();
 
-    expect(find.text(controller.text.firewallStatus), findsOneWidget);
-    final repairButton = find.widgetWithText(
-      FilledButton,
-      controller.text.repairFirewall,
-    );
-    expect(repairButton, findsOneWidget);
-    await tester.tap(repairButton);
-    await tester.pump();
+      expect(find.text(controller.text.firewallStatus), findsOneWidget);
+      final repairButton = find.widgetWithText(
+        FilledButton,
+        controller.text.repairFirewall,
+      );
+      expect(repairButton, findsOneWidget);
+      await tester.tap(repairButton);
+      await tester.pump();
 
-    final pendingButton = tester.widget<FilledButton>(repairButton);
-    expect(pendingButton.onPressed, isNull);
+      final pendingButton = tester.widget<FilledButton>(repairButton);
+      expect(pendingButton.onPressed, isNull);
 
-    firewall.repairCompleter.complete(
-      const WindowsFirewallStatus(
-        state: WindowsFirewallRuleState.configured,
-        udpConfigured: true,
-        tcpConfigured: true,
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.text(
-        controller.text.firewallStatusLabel(
-          WindowsFirewallRuleState.configured,
+      firewall.repairCompleter.complete(
+        const WindowsFirewallStatus(
+          state: WindowsFirewallRuleState.configured,
+          udpConfigured: true,
+          tcpConfigured: true,
         ),
-      ),
-      findsOneWidget,
-    );
-  });
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          controller.text.firewallStatusLabel(
+            WindowsFirewallRuleState.configured,
+          ),
+        ),
+        findsOneWidget,
+      );
+    },
+    skip: !Platform.isWindows,
+  );
 }

@@ -2004,21 +2004,24 @@ class TransportService {
       return error.type == dio.DioExceptionType.connectionError ||
           error.type == dio.DioExceptionType.connectionTimeout ||
           error.type == dio.DioExceptionType.receiveTimeout ||
-          error.type == dio.DioExceptionType.sendTimeout;
+          error.type == dio.DioExceptionType.sendTimeout ||
+          // Dio 5.11 adds this value; keep compatibility with locked Dio 5.9.
+          error.type.name == 'transformTimeout';
     }
     return false;
   }
 
   NetworkDiagnosticStatus _diagnosticStatusFromDio(dio.DioException error) {
-    switch (error.type) {
-      case dio.DioExceptionType.connectionTimeout:
-      case dio.DioExceptionType.receiveTimeout:
-      case dio.DioExceptionType.sendTimeout:
+    switch (error.type.name) {
+      case 'connectionTimeout':
+      case 'receiveTimeout':
+      case 'sendTimeout':
+      case 'transformTimeout':
         return NetworkDiagnosticStatus.timeout;
-      case dio.DioExceptionType.badResponse:
+      case 'badResponse':
         return NetworkDiagnosticStatus.nonLocalChat;
-      case dio.DioExceptionType.connectionError:
-      case dio.DioExceptionType.unknown:
+      case 'connectionError':
+      case 'unknown':
         final detail = _diagnosticDetail(error).toLowerCase();
         if (detail.contains('refused') ||
             detail.contains('actively refused') ||
@@ -2035,8 +2038,10 @@ class TransportService {
           return NetworkDiagnosticStatus.timeout;
         }
         return NetworkDiagnosticStatus.unknownError;
-      case dio.DioExceptionType.badCertificate:
-      case dio.DioExceptionType.cancel:
+      case 'badCertificate':
+      case 'cancel':
+        return NetworkDiagnosticStatus.unknownError;
+      default:
         return NetworkDiagnosticStatus.unknownError;
     }
   }

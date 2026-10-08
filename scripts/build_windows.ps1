@@ -19,7 +19,7 @@ $releaseDir = Join-Path $projectRoot 'dist'
 New-Item -ItemType Directory -Path $cliBuild -Force | Out-Null
 Push-Location -LiteralPath $cliRoot
 try {
-    & dart pub get
+    & dart pub get --enforce-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'CLI dependency resolution failed.' }
     & dart compile exe bin/localchat_cli.dart -o (Join-Path $cliBuild 'localchat-cli.exe')
     if ($LASTEXITCODE -ne 0) { throw 'CLI compilation failed.' }
@@ -29,11 +29,13 @@ try {
 
 Push-Location -LiteralPath $projectRoot
 try {
+    & flutter pub get --enforce-lockfile
+    if ($LASTEXITCODE -ne 0) { throw 'Flutter dependency resolution failed.' }
     if ($CMakeGenerator) {
         # Generate Flutter's SDK/plugin configuration, then use the explicitly
         # selected toolchain in a separate cache (for example when ATL is absent
         # from the VS installation detected by Flutter).
-        & flutter build windows --release --config-only
+        & flutter build windows --release --config-only --no-pub
         if ($LASTEXITCODE -ne 0) { throw 'Windows build configuration failed.' }
         $customBuild = Join-Path $projectRoot ('build/windows-' + $CMakeGenerator.Replace(' ', '-'))
         & cmake -S windows -B $customBuild -G $CMakeGenerator -A x64 -DFLUTTER_TARGET_PLATFORM=windows-x64
@@ -42,7 +44,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Windows client build failed.' }
         $bundle = Join-Path $customBuild 'runner/Release'
     } else {
-        & flutter build windows --release
+        & flutter build windows --release --no-pub
         if ($LASTEXITCODE -ne 0) { throw 'Windows client build failed.' }
     }
     Copy-Item -LiteralPath (Join-Path $cliBuild 'localchat-cli.exe') -Destination $bundle

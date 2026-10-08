@@ -1,0 +1,10 @@
+name: localchat_cli
+description: LocalChat Windows automation command line client.
+version: 1.0.0
+publish_to: none
+environment:
+  sdk: ^3.12.2
+dependencies:
+  args: ^2.7.0
+dev_dependencies:
+  test: ^1.26.0

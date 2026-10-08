@@ -26,6 +26,7 @@ import '../models/update_check.dart';
 import 'network_health_controller.dart';
 import 'settings_controller.dart';
 import '../services/android_keep_alive_service.dart';
+import '../services/automation_service.dart';
 import '../services/app_info_service.dart';
 import '../services/clipboard_import_service.dart';
 import '../services/discovery_service.dart';
@@ -62,6 +63,7 @@ class AppController extends ChangeNotifier {
     DiagnosticLogService? diagnosticLogService,
     WindowsFirewallService? windowsFirewallService,
     DateTime Function()? now,
+    bool enableAutomation = false,
   }) : db = database ?? AppDatabase(),
        fileStore = fileStore ?? FileStore(),
        clipboardImportService =
@@ -77,7 +79,9 @@ class AppController extends ChangeNotifier {
            WindowsFirewallService(
              logger: diagnosticLogService ?? const NoopDiagnosticLogger(),
            ),
-       _now = now ?? DateTime.now {
+       _now = now ?? DateTime.now,
+       // ignore: prefer_initializing_formals
+       _enableAutomation = enableAutomation {
     // 生产环境由 main() 传入真实 SecureKeyStore；测试默认不传（回退数据库明文），
     // 避免依赖平台安全存储插件。
     identityService = IdentityService(db, secureKeyStore: secureKeyStore);
@@ -89,6 +93,9 @@ class AppController extends ChangeNotifier {
       this.fileStore,
     );
     discoveryService = DiscoveryService(db, identityService, logger: _logger);
+    automationService = AutomationService(
+      dispatcher: AutomationDispatcher(db, transportService),
+    );
     settings = SettingsController(db: db, windowService: windowService);
     networkHealth = NetworkHealthController(
       discoveryService: discoveryService,
@@ -114,11 +121,13 @@ class AppController extends ChangeNotifier {
   final DiagnosticLogger _logger;
   final WindowsFirewallService windowsFirewallService;
   final DateTime Function() _now;
+  final bool _enableAutomation;
   final WindowService windowService = const WindowService();
   late final IdentityService identityService;
   late final SecurityService securityService;
   late final TransportService transportService;
   late final DiscoveryService discoveryService;
+  late final AutomationService automationService;
 
   /// 设置子控制器：语言/外观/自动复制/托盘/开机自启。对外字段与方法通过下方 getter
   /// 与同名方法委托，UI 无需感知拆分（计划 P1 控制器拆分）。
@@ -229,7 +238,6 @@ class AppController extends ChangeNotifier {
   bool get trayEnabled => settings.trayEnabled;
   bool get autostartEnabled => settings.autostartEnabled;
   bool get quickSendEnabled => settings.quickSendEnabled;
-  bool get quickSendAutoHide => settings.quickSendAutoHide;
   bool get notificationsEnabled => settings.notificationsEnabled;
   bool get notificationPreviewEnabled => settings.notificationPreviewEnabled;
   bool get keepAliveEnabled => settings.keepAliveEnabled;
@@ -267,13 +275,7 @@ class AppController extends ChangeNotifier {
       await settings.load();
       await loadAppInfo();
       await _runOptional('window.quick_drop_setup', () async {
-        await windowService.setQuickDropFilesHandler(
-          handleQuickDropFiles,
-          onHide: () {
-            unawaited(settings.setQuickSendEnabled(false));
-            notifyListeners();
-          },
-        );
+        await windowService.setQuickDropFilesHandler(handleQuickDropFiles);
       });
       await _syncStorageRootFromSettings();
       if (settings.keepAliveEnabled && keepAliveService.isSupported) {
@@ -335,6 +337,9 @@ class AppController extends ChangeNotifier {
       await refresh();
       unawaited(_syncQuickSendDevices());
       initialized = true;
+      if (_enableAutomation && Platform.isWindows) {
+        await _runOptional('automation.start', automationService.start);
+      }
       if (identityService.identityResetDuringLoad) {
         status = text.localIdentityResetAfterSecureStorageFailure;
         notificationText = status;
@@ -1036,11 +1041,6 @@ class AppController extends ChangeNotifier {
     await settings.setQuickSendEnabled(value);
     await _syncQuickSendDevices();
     status = value ? text.quickSendEnabled : text.quickSendDisabled;
-    notifyListeners();
-  }
-
-  Future<void> setQuickSendAutoHide(bool value) async {
-    await settings.setQuickSendAutoHide(value);
     notifyListeners();
   }
 
@@ -2112,6 +2112,7 @@ class AppController extends ChangeNotifier {
     unawaited(keepAliveService.stop());
     unawaited(discoveryService.stop());
     unawaited(transportService.stop());
+    unawaited(automationService.stop());
     final logger = diagnosticLogService;
     if (logger != null) unawaited(logger.dispose());
     notificationService.dispose();

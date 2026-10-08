@@ -20,6 +20,7 @@ import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
 import '../models/notification_event.dart';
 import '../models/protocol.dart';
+import '../models/send_receipt.dart';
 import '../models/transfer_views.dart';
 import 'file_store.dart';
 import 'transport/frame_codec.dart';
@@ -605,55 +606,74 @@ class TransportService {
   }
 
   Future<void> sendText(Device peer, String text) async {
-    final currentPeer = await _freshPeer(peer);
-    _requireIdentityUnchanged(currentPeer);
-    final conversation = await _db.ensureConversation(currentPeer);
-    final messageId = _uuid.v4();
-    await _db.addMessage(
-      ChatMessagesCompanion.insert(
-        id: messageId,
-        conversationId: conversation.id,
-        peerDeviceId: currentPeer.id,
-        direction: 'out',
-        kind: Uri.tryParse(text)?.hasAbsolutePath == true ? 'link' : 'text',
-        body: Value(text),
-        status: 'sending',
-        createdAt: DateTime.now(),
-      ),
+    await sendTextWithReceipt(peer, text);
+  }
+
+  Future<SendReceipt> sendTextWithReceipt(Device peer, String text) async {
+    final receipt = await _createTextMessage(peer, text, 'sending');
+    await _deliverText(peer, text, receipt.messageIds.single);
+    return receipt;
+  }
+
+  /// Register the message before returning so --no-wait can immediately query
+  /// it. Delivery errors are persisted by _deliverText and read via the job ID.
+  Future<SendReceipt> enqueueTextWithReceipt(Device peer, String text) async {
+    final receipt = await _createTextMessage(peer, text, 'queued');
+    unawaited(
+      _deliverText(
+        peer,
+        text,
+        receipt.messageIds.single,
+      ).catchError((Object _) {}),
     );
+    return receipt;
+  }
+
+  Future<SendReceipt> _createTextMessage(
+    Device peer,
+    String text,
+    String status,
+  ) async {
+    final currentPeer = await _freshSendPeer(peer);
+    _requireIdentityUnchanged(currentPeer);
+    final messageId = _uuid.v4();
+    await _db.transaction(() async {
+      final conversation = await _db.ensureConversation(currentPeer);
+      await _db.addMessage(
+        ChatMessagesCompanion.insert(
+          id: messageId,
+          conversationId: conversation.id,
+          peerDeviceId: currentPeer.id,
+          direction: 'out',
+          kind: Uri.tryParse(text)?.hasAbsolutePath == true ? 'link' : 'text',
+          body: Value(text),
+          status: status,
+          createdAt: DateTime.now(),
+        ),
+      );
+    });
     _updates.add(null);
+    return SendReceipt(
+      jobId: 'message:$messageId',
+      targetDeviceId: currentPeer.id,
+      messageIds: [messageId],
+    );
+  }
+
+  Future<void> _deliverText(Device peer, String text, String messageId) async {
     try {
+      final currentPeer = await _freshSendPeer(peer);
+      _requireIdentityUnchanged(currentPeer);
+      await _setMessageStatus(messageId, 'sending');
       await _postSecure(currentPeer, '/v1/messages', {
         'id': messageId,
         'kind': 'text',
         'body': text,
         'created_at': DateTime.now().toIso8601String(),
       });
-      await _db.addMessage(
-        ChatMessagesCompanion.insert(
-          id: messageId,
-          conversationId: conversation.id,
-          peerDeviceId: currentPeer.id,
-          direction: 'out',
-          kind: 'text',
-          body: Value(text),
-          status: 'sent',
-          createdAt: DateTime.now(),
-        ),
-      );
+      await _setMessageStatus(messageId, 'sent');
     } catch (_) {
-      await _db.addMessage(
-        ChatMessagesCompanion.insert(
-          id: messageId,
-          conversationId: conversation.id,
-          peerDeviceId: currentPeer.id,
-          direction: 'out',
-          kind: 'text',
-          body: Value(text),
-          status: 'failed',
-          createdAt: DateTime.now(),
-        ),
-      );
+      await _setMessageStatus(messageId, 'failed');
       rethrow;
     } finally {
       _updates.add(null);
@@ -772,10 +792,13 @@ class TransportService {
   }
 
   Future<void> sendFiles(Device peer, List<String> paths) async {
-    final groupId = _uuid.v4();
+    final entries = <({String absolute, String? relative})>[];
     for (final path in paths) {
-      await _enqueueFile(peer, File(path), groupId: groupId);
+      if (await File(path).exists()) {
+        entries.add((absolute: path, relative: null));
+      }
     }
+    if (entries.isNotEmpty) await sendPreparedFilesWithReceipt(peer, entries);
   }
 
   /// 递归发送一个文件夹。entries 为 (绝对路径, 相对根目录的路径) 列表，
@@ -787,31 +810,58 @@ class TransportService {
     String rootName,
     List<({String absolute, String relative})> entries,
   ) async {
-    final groupId = _uuid.v4();
-    for (final entry in entries) {
-      await _enqueueFile(
-        peer,
-        File(entry.absolute),
-        groupId: groupId,
-        relativePath: entry.relative,
-      );
-    }
+    if (entries.isNotEmpty) await sendPreparedFilesWithReceipt(peer, entries);
   }
 
-  /// 把单个文件入队为排队传输（status='queued'），立即返回，不阻塞调用方。
-  /// 队列单活动串行执行，支持取消排队任务与当前活动任务。
-  Future<void> _enqueueFile(
+  /// Persist the entire group atomically before the worker sees any item.
+  /// Callers validate/read directory entries before calling this method.
+  Future<SendReceipt> sendPreparedFilesWithReceipt(
+    Device peer,
+    List<({String absolute, String? relative})> entries,
+  ) async {
+    if (entries.isEmpty) throw ArgumentError('No files to send');
+    final currentPeer = await _freshSendPeer(peer);
+    _requireIdentityUnchanged(currentPeer);
+    final groupId = _uuid.v4();
+    final tasks = <OutboundTask>[];
+    final messageIds = <String>[];
+    await _db.transaction(() async {
+      for (final entry in entries) {
+        final created = await _createFileTask(
+          currentPeer,
+          File(entry.absolute),
+          groupId: groupId,
+          relativePath: entry.relative,
+        );
+        tasks.add(created.task);
+        messageIds.add(created.messageId);
+      }
+    });
+    for (final task in tasks) {
+      _liveStats[task.transferId] = LiveTransferStat(totalBytes: task.length);
+    }
+    _outboundQueue.addAll(tasks);
+    _updates.add(null);
+    unawaited(_pumpOutbound());
+    return SendReceipt(
+      jobId: 'group:$groupId',
+      targetDeviceId: currentPeer.id,
+      groupId: groupId,
+      messageIds: messageIds,
+      transferIds: tasks.map((task) => task.transferId).toList(),
+    );
+  }
+
+  Future<({OutboundTask task, String messageId})> _createFileTask(
     Device peer,
     File file, {
     required String groupId,
     String? relativePath,
   }) async {
-    if (!await file.exists()) return;
-    final currentPeer = await _freshPeer(peer);
-    _requireIdentityUnchanged(currentPeer);
     final length = await file.length();
     final transferId = _uuid.v4();
-    final conversation = await _db.ensureConversation(currentPeer);
+    final messageId = _uuid.v4();
+    final conversation = await _db.ensureConversation(peer);
     final name = p.basename(file.path);
     final mimeType = lookupMimeType(file.path);
     final totalChunks = length == 0
@@ -822,7 +872,7 @@ class TransportService {
         .insertOnConflictUpdate(
           TransfersCompanion.insert(
             id: transferId,
-            peerDeviceId: currentPeer.id,
+            peerDeviceId: peer.id,
             direction: 'out',
             fileName: name,
             fileSize: length,
@@ -838,9 +888,9 @@ class TransportService {
         );
     await _db.addMessage(
       ChatMessagesCompanion.insert(
-        id: _uuid.v4(),
+        id: messageId,
         conversationId: conversation.id,
-        peerDeviceId: currentPeer.id,
+        peerDeviceId: peer.id,
         direction: 'out',
         kind: 'file',
         fileName: Value(name),
@@ -853,11 +903,11 @@ class TransportService {
         createdAt: DateTime.now(),
       ),
     );
-    _liveStats[transferId] = LiveTransferStat(totalBytes: length);
-    _outboundQueue.add(
-      OutboundTask(
+    return (
+      messageId: messageId,
+      task: OutboundTask(
         transferId: transferId,
-        peerId: currentPeer.id,
+        peerId: peer.id,
         file: file,
         name: name,
         length: length,
@@ -867,8 +917,6 @@ class TransportService {
         relativePath: relativePath,
       ),
     );
-    _updates.add(null);
-    _pumpOutbound();
   }
 
   /// 单活动出站调度：同一时刻只跑一个出站任务，完成后处理下一个。
@@ -900,6 +948,11 @@ class TransportService {
     if (stored == null) {
       await _markTransferFailed(task.transferId, 'peer_removed');
       task.completeError(StateError('Peer was removed.'));
+      return;
+    }
+    if (!stored.trusted) {
+      await _markTransferFailed(task.transferId, 'peer_unpaired');
+      task.completeError(StateError('Peer is no longer paired.'));
       return;
     }
     try {
@@ -1819,6 +1872,17 @@ class TransportService {
 
   Future<Device> _freshPeer(Device peer) async {
     return await _db.getDevice(peer.id) ?? peer;
+  }
+
+  Future<Device> _freshSendPeer(Device peer) async {
+    final current = await _db.getDevice(peer.id);
+    if (current == null || !current.trusted) {
+      throw const AppFailure(
+        code: 'peer_unpaired',
+        userMessage: 'The device is no longer paired.',
+      );
+    }
+    return current;
   }
 
   /// 构建传输中心所需的全部任务视图（合并 DB 持久化进度与内存实时速度）。

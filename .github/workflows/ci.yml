@@ -24,6 +24,10 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: CLI dependencies
+        working-directory: tools/localchat_cli
+        run: dart pub get
+
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed .
 
@@ -32,3 +36,38 @@ jobs:
 
       - name: Test
         run: flutter test
+
+      - name: Analyze CLI
+        working-directory: tools/localchat_cli
+        run: dart analyze
+
+      - name: Test CLI
+        working-directory: tools/localchat_cli
+        run: dart test
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.2
+          channel: stable
+          cache: true
+      - name: Build client and standalone CLI
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Verify compiled CLI with encrypted transport
+        run: flutter test --no-pub test/automation_service_test.dart
+      - name: Test native descriptor permissions
+        shell: pwsh
+        run: |
+          cmake -S windows/runner/tests -B build/native-tests -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/native-tests --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build/native-tests -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalChat-windows
+          path: dist/LocalChat-windows.zip

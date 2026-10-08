@@ -17,12 +17,23 @@ class WindowService {
 
   bool get isSupported => Platform.isWindows;
 
+  /// Native code publishes with an owner/admin/system-only protected DACL.
+  /// Never write the token into a file with inherited public permissions.
+  Future<String> publishAutomationDescriptor(String contents) async {
+    final path = await _channel.invokeMethod<String>(
+      'publishAutomationDescriptor',
+      {'contents': contents},
+    );
+    if (path == null) throw StateError('Automation descriptor unavailable');
+    return path;
+  }
+
+  Future<void> removeAutomationDescriptor() =>
+      _channel.invokeMethod<void>('removeAutomationDescriptor');
+
   /// 注册 Windows 快捷拖拽投递回调。原生层只负责采集目标设备与路径；
   /// 实际信任/在线校验和发送仍由 Dart 控制器完成。
-  Future<void> setQuickDropFilesHandler(
-    QuickDropFilesHandler? handler, {
-    void Function()? onHide,
-  }) async {
+  Future<void> setQuickDropFilesHandler(QuickDropFilesHandler? handler) async {
     if (!isSupported) return;
     try {
       if (handler == null) {
@@ -38,10 +49,6 @@ class WindowService {
           if (deviceId is! String || rawPaths is! List) return null;
           final paths = rawPaths.whereType<String>().toList();
           await handler(deviceId, paths);
-        } else if (call.method == 'quickDropShelfHidden') {
-          if (onHide != null) {
-            onHide();
-          }
         }
         return null;
       });
@@ -151,7 +158,7 @@ class WindowService {
     }
   }
 
-  /// 设置桌面底部快捷拖拽发送开关。
+  /// 设置桌面右下角按需显示的快捷拖拽发送开关。
   Future<void> setQuickSendEnabled(bool enabled) async {
     if (!isSupported) return;
     try {
@@ -167,23 +174,7 @@ class WindowService {
     }
   }
 
-  /// 设置贴边是否自动隐藏成条形。
-  Future<void> setQuickSendAutoHide(bool autoHide) async {
-    if (!isSupported) return;
-    try {
-      await _channel.invokeMethod<void>('setQuickSendAutoHide', {
-        'autoHide': autoHide,
-      });
-    } on MissingPluginException {
-      // ignore
-    } on PlatformException {
-      // ignore
-    } catch (_) {
-      // ignore
-    }
-  }
-
-  /// 同步原生快捷拖拽浮层要展示的在线可信设备。
+  /// 同步原生快捷投递条要展示的在线可信设备。
   Future<void> updateQuickSendDevices(List<QuickSendDeviceView> devices) async {
     if (!isSupported) return;
     try {

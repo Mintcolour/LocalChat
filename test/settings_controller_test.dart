@@ -78,7 +78,6 @@ void main() {
     await settings.setNotificationPreviewEnabled(true);
     await settings.setKeepAliveEnabled(true);
     await settings.setQuickSendEnabled(true);
-    await settings.setQuickSendAutoHide(false);
     await settings.setStorageRootPath(r'C:\LocalChatStore');
     await settings.setDailyUpdateCheckEnabled(true);
     await settings.setLastUpdateCheckAt(DateTime.utc(2026, 6, 27, 1));
@@ -90,7 +89,6 @@ void main() {
     expect(settings.notificationPreviewEnabled, isTrue);
     expect(settings.keepAliveEnabled, isTrue);
     expect(settings.quickSendEnabled, isTrue);
-    expect(settings.quickSendAutoHide, isFalse);
     expect(settings.storageRootPath, r'C:\LocalChatStore');
     expect(settings.dailyUpdateCheckEnabled, isTrue);
     expect(settings.lastUpdateCheckAt, DateTime.utc(2026, 6, 27, 1));
@@ -108,7 +106,6 @@ void main() {
     expect(reloaded.notificationPreviewEnabled, isTrue);
     expect(reloaded.keepAliveEnabled, isTrue);
     expect(reloaded.quickSendEnabled, isTrue);
-    expect(reloaded.quickSendAutoHide, isFalse);
     expect(reloaded.storageRootPath, r'C:\LocalChatStore');
     expect(reloaded.dailyUpdateCheckEnabled, isTrue);
     expect(reloaded.lastUpdateCheckAt, DateTime.utc(2026, 6, 27, 1));

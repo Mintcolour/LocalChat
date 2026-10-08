@@ -1,998 +1,517 @@
 #include "quick_drop_shelf.h"
 #include "resource.h"
 
-#include <objidl.h>
 #include <ole2.h>
 #include <shellapi.h>
-
 #include <algorithm>
 #include <sstream>
+#include <utility>
 
 namespace {
-
-constexpr const wchar_t kShelfClassName[] = L"LocalChatQuickDropShelf";
-constexpr int kCollapsedWidth = 56;
-constexpr int kCollapsedHeight = 56;
-constexpr int kExpandedWidth = 480;
-constexpr int kExpandedHeight = 120;
+constexpr wchar_t kShelfClassName[] = L"LocalChatQuickDropShelf";
+constexpr UINT kDragChanged = WM_APP + 0x341;
+constexpr UINT_PTR kWatchTimer = 1;
+constexpr UINT_PTR kEndTimer = 2;
+constexpr UINT_PTR kLeaveTimer = 3;
+constexpr int kPromptWidth = 360;
+constexpr int kExpandedWidth = 420;
+constexpr int kPromptHeight = 52;
+constexpr int kExpandedHeight = 168;
+constexpr BYTE kOpacity = 248;
 
 std::wstring Utf8ToWide(const std::string& value) {
-  if (value.empty()) return L"";
-  int size = MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
-                                 static_cast<int>(value.length()), nullptr, 0);
+  if (value.empty()) return {};
+  const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(),
+      static_cast<int>(value.size()), nullptr, 0);
   std::wstring result(size, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
-                      static_cast<int>(value.length()), result.data(), size);
+  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+      result.data(), size);
   return result;
 }
 
 std::string WideToUtf8(const std::wstring& value) {
-  if (value.empty()) return "";
-  int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
-                                 static_cast<int>(value.length()), nullptr, 0,
-                                 nullptr, nullptr);
-  std::string result(size, 0);
-  WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
-                      static_cast<int>(value.length()), result.data(), size,
-                      nullptr, nullptr);
+  if (value.empty()) return {};
+  const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+      static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+  std::string result(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+      result.data(), size, nullptr, nullptr);
   return result;
 }
 
-COLORREF ColorFromHex(const std::string& value, COLORREF fallback) {
+COLORREF ColorFromHex(const std::string& value) {
   std::string clean = value;
-  if (!clean.empty() && clean[0] == '#') {
-    clean = clean.substr(1);
-  }
-  if (clean.length() != 6) return fallback;
+  if (!clean.empty() && clean[0] == '#') clean.erase(0, 1);
   unsigned int color = 0;
   std::stringstream stream;
   stream << std::hex << clean;
-  if (!(stream >> color)) return fallback;
-  return RGB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+  if (clean.size() != 6 || !(stream >> color)) return RGB(31, 163, 122);
+  return RGB((color >> 16) & 255, (color >> 8) & 255, color & 255);
 }
 
-void FillRoundRect(HDC hdc, const RECT& rect, int radius, COLORREF color) {
+void RoundFill(HDC dc, RECT rect, int radius, COLORREF color) {
   HBRUSH brush = CreateSolidBrush(color);
-  HPEN pen = CreatePen(PS_SOLID, 1, color);
-  HGDIOBJ old_brush = SelectObject(hdc, brush);
-  HGDIOBJ old_pen = SelectObject(hdc, pen);
-  RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-  SelectObject(hdc, old_brush);
-  SelectObject(hdc, old_pen);
+  HGDIOBJ old_brush = SelectObject(dc, brush);
+  HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+  RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+  SelectObject(dc, old_brush);
+  SelectObject(dc, old_pen);
   DeleteObject(brush);
-  DeleteObject(pen);
 }
 
-void StrokeRoundRect(HDC hdc, const RECT& rect, int radius, COLORREF color,
-                     int width) {
-  HBRUSH brush = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
-  HPEN pen = CreatePen(PS_SOLID, width, color);
-  HGDIOBJ old_brush = SelectObject(hdc, brush);
-  HGDIOBJ old_pen = SelectObject(hdc, pen);
-  RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-  SelectObject(hdc, old_brush);
-  SelectObject(hdc, old_pen);
-  DeleteObject(pen);
+HFONT UiFont(int height, int weight = FW_NORMAL) {
+  return CreateFontW(-height, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 }
 
-HFONT CreateUiFont(int size, int weight = FW_NORMAL) {
-  return CreateFontW(-size, 0, 0, 0, weight, FALSE, FALSE, FALSE,
-                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                     L"Segoe UI");
+bool HasFiles(IDataObject* object) {
+  if (!object) return false;
+  FORMATETC format = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+  return object->QueryGetData(&format) == S_OK;
 }
 
-int MaxScroll(int device_count, int card_width) {
-  if (device_count <= 5) return 0;
-  const int content_width = device_count * 72 + (device_count - 1) * 12;
-  const int visible_width = card_width - 40;
-  return (std::max)(0, content_width - visible_width);
-}
-
-std::vector<std::string> ReadDropPaths(IDataObject* data_object) {
+std::vector<std::string> ReadDropPaths(IDataObject* object) {
   std::vector<std::string> paths;
+  if (!object) return paths;
   FORMATETC format = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
   STGMEDIUM medium = {};
-  if (data_object->QueryGetData(&format) != S_OK ||
-      data_object->GetData(&format, &medium) != S_OK) {
-    return paths;
-  }
-
-  HDROP drop = static_cast<HDROP>(GlobalLock(medium.hGlobal));
-  if (drop != nullptr) {
-    UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  if (FAILED(object->GetData(&format, &medium))) return paths;
+  if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal) {
+    const HDROP drop = static_cast<HDROP>(medium.hGlobal);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
     for (UINT index = 0; index < count; ++index) {
-      UINT length = DragQueryFileW(drop, index, nullptr, 0);
+      const UINT length = DragQueryFileW(drop, index, nullptr, 0);
       std::wstring path(length + 1, L'\0');
-      DragQueryFileW(drop, index, path.data(), length + 1);
-      path.resize(length);
-      paths.push_back(WideToUtf8(path));
+      if (DragQueryFileW(drop, index, path.data(), length + 1) > 0) {
+        path.resize(length);
+        paths.push_back(WideToUtf8(path));
+      }
     }
-    GlobalUnlock(medium.hGlobal);
   }
   ReleaseStgMedium(&medium);
   return paths;
 }
-
-class WindowClassRegistrar {
- public:
-  static const wchar_t* GetClassName() {
-    static bool registered = false;
-    if (!registered) {
-      WNDCLASSW window_class = {};
-      window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
-      window_class.lpszClassName = kShelfClassName;
-      window_class.hInstance = GetModuleHandle(nullptr);
-      window_class.hbrBackground = nullptr;
-      window_class.lpfnWndProc = QuickDropShelf::WndProc;
-      RegisterClassW(&window_class);
-      registered = true;
-    }
-    return kShelfClassName;
-  }
-};
-
 }  // namespace
 
 class QuickDropShelf::DropTarget : public IDropTarget {
  public:
   explicit DropTarget(QuickDropShelf* shelf) : shelf_(shelf) {}
-
-  HRESULT DragEnter(IDataObject* data_object,
-                    DWORD key_state,
-                    POINTL point,
-                    DWORD* effect) override {
-    KillTimer(shelf_->hwnd_, 4);
-    shelf_->drag_leave_pending_ = false;
-    if (shelf_->state_ == STATE_HIDDEN_BAR) {
-      KillTimer(shelf_->hwnd_, 3);
-    }
+  HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* object, DWORD, POINTL point,
+                                       DWORD* effect) override {
+    accepted_ = HasFiles(object) && ((*effect & DROPEFFECT_COPY) != 0);
+    *effect = DROPEFFECT_NONE;
+    if (!accepted_ || !shelf_->enabled_) return S_OK;
+    KillTimer(shelf_->hwnd_, kEndTimer);
+    KillTimer(shelf_->hwnd_, kLeaveTimer);
+    shelf_->ole_drag_active_ = true;
     shelf_->SetExpanded(true);
-    shelf_->hover_index_ = -1;
-    *effect = shelf_->devices_.empty() ? DROPEFFECT_NONE : DROPEFFECT_COPY;
-    InvalidateRect(shelf_->hwnd_, nullptr, TRUE);
+    return DragOver(0, point, effect);
+  }
+  HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override {
+    *effect = DROPEFFECT_NONE;
+    if (!accepted_ || !shelf_->enabled_) return S_OK;
+    const POINT cursor = {point.x, point.y};
+    shelf_->ScrollToward(cursor);
+    const int hover = shelf_->HitTest(cursor);
+    if (hover != shelf_->hover_index_) {
+      shelf_->hover_index_ = hover;
+      InvalidateRect(shelf_->hwnd_, nullptr, FALSE);
+    }
+    if (shelf_->DropIndex(cursor) >= 0) *effect = DROPEFFECT_COPY;
     return S_OK;
   }
-
-  HRESULT DragOver(DWORD key_state, POINTL point, DWORD* effect) override {
-    POINT screen_point = {point.x, point.y};
-    POINT client_point = screen_point;
-    ScreenToClient(shelf_->hwnd_, &client_point);
-
-    RECT card_rect = {10, 10, kExpandedWidth - 10, kExpandedHeight - 10};
-
-    if (shelf_->state_ == STATE_PROMPT && PtInRect(&card_rect, client_point)) {
-      shelf_->state_ = STATE_DEVICES;
-      InvalidateRect(shelf_->hwnd_, nullptr, TRUE);
-    }
-
-    if (shelf_->state_ == STATE_DEVICES) {
-      shelf_->ScrollToward(screen_point);
-      shelf_->hover_index_ = shelf_->HitTest(screen_point);
-    } else {
-      shelf_->hover_index_ = -1;
-    }
-
+  HRESULT STDMETHODCALLTYPE DragLeave() override {
+    accepted_ = false;
+    shelf_->ole_drag_active_ = false;
+    shelf_->hover_index_ = -1;
+    SetTimer(shelf_->hwnd_, kLeaveTimer, 120, nullptr);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Drop(IDataObject* object, DWORD, POINTL point,
+                                  DWORD* effect) override {
     *effect = DROPEFFECT_NONE;
-    if (!shelf_->devices_.empty()) {
-      if (shelf_->hover_index_ >= 0 || (shelf_->devices_.size() == 1 && PtInRect(&card_rect, client_point))) {
+    const int index = shelf_->DropIndex({point.x, point.y});
+    if (accepted_ && shelf_->enabled_ && index >= 0) {
+      const auto paths = ReadDropPaths(object);
+      if (!paths.empty()) {
+        shelf_->NotifyDrop(index, paths);
         *effect = DROPEFFECT_COPY;
       }
     }
-
-    InvalidateRect(shelf_->hwnd_, nullptr, TRUE);
+    accepted_ = false;
+    shelf_->ole_drag_active_ = false;
+    shelf_->Hide();
     return S_OK;
   }
-
-  HRESULT DragLeave() override {
-    shelf_->hover_index_ = -1;
-    shelf_->drag_leave_pending_ = true;
-    SetTimer(shelf_->hwnd_, 4, 150, nullptr);
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
+    if (!result) return E_POINTER;
+    *result = nullptr;
+    if (iid != IID_IUnknown && iid != IID_IDropTarget) return E_NOINTERFACE;
+    *result = static_cast<IDropTarget*>(this);
+    AddRef();
     return S_OK;
   }
-
-  HRESULT Drop(IDataObject* data_object,
-               DWORD key_state,
-               POINTL point,
-               DWORD* effect) override {
-    KillTimer(shelf_->hwnd_, 4);
-    shelf_->drag_leave_pending_ = false;
-    POINT screen_point = {point.x, point.y};
-    POINT client_point = screen_point;
-    ScreenToClient(shelf_->hwnd_, &client_point);
-    RECT card_rect = {10, 10, kExpandedWidth - 10, kExpandedHeight - 10};
-
-    int index = shelf_->HitTest(screen_point);
-    if (index < 0 && shelf_->devices_.size() == 1 && PtInRect(&card_rect, client_point)) {
-      index = 0;
-    }
-    const auto paths = ReadDropPaths(data_object);
-    if (index >= 0 && !paths.empty()) {
-      shelf_->NotifyDrop(index, paths);
-      *effect = DROPEFFECT_COPY;
-    } else {
-      *effect = DROPEFFECT_NONE;
-    }
-    shelf_->hover_index_ = -1;
-    shelf_->SetExpanded(false);
-    return S_OK;
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&refs_);
   }
-
-  HRESULT QueryInterface(const IID& iid, void** object) override {
-    if (iid == IID_IUnknown || iid == IID_IDropTarget) {
-      *object = static_cast<IDropTarget*>(this);
-      AddRef();
-      return S_OK;
-    }
-    *object = nullptr;
-    return E_NOINTERFACE;
-  }
-
-  ULONG AddRef() override {
-    return InterlockedIncrement(&ref_count_);
-  }
-
-  ULONG Release() override {
-    LONG count = InterlockedDecrement(&ref_count_);
+  ULONG STDMETHODCALLTYPE Release() override {
+    const LONG count = InterlockedDecrement(&refs_);
+    if (!count) delete this;
     return static_cast<ULONG>(count);
   }
-
  private:
   QuickDropShelf* shelf_;
-  LONG ref_count_ = 1;
+  LONG refs_ = 1;
+  bool accepted_ = false;
 };
 
 QuickDropShelf::QuickDropShelf() = default;
-
-QuickDropShelf::~QuickDropShelf() {
-  Destroy();
-}
-
+QuickDropShelf::~QuickDropShelf() { Destroy(); }
 void QuickDropShelf::SetDropCallback(DropCallback callback) {
   drop_callback_ = std::move(callback);
 }
 
-void QuickDropShelf::SetHideCallback(HideCallback callback) {
-  hide_callback_ = std::move(callback);
-}
-
-void QuickDropShelf::SetAutoHide(bool auto_hide) {
-  auto_hide_ = auto_hide;
-  if (!auto_hide_ && state_ == STATE_HIDDEN_BAR) {
-    WakeUp();
-  }
-}
-
 void QuickDropShelf::SetEnabled(bool enabled, HWND owner) {
-  enabled_ = enabled;
   owner_ = owner;
-  if (!enabled_) {
-    if (hwnd_ != nullptr) {
-      KillTimer(hwnd_, 2);
-      KillTimer(hwnd_, 3);
-      ShowWindow(hwnd_, SW_HIDE);
-    }
+  if (enabled == enabled_) return;
+  if (!enabled) {
+    enabled_ = false;
+    drag_monitor_.Stop();
+    Hide();
     return;
   }
-  if (hwnd_ == nullptr && !Create(owner)) {
-    return;
-  }
-  LayoutCollapsed();
-  ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-
-  SetTimer(hwnd_, 2, 1000, nullptr);
-  last_active_time_ = GetTickCount64();
-}
-
-void QuickDropShelf::UpdateDevices(std::vector<QuickDropDevice> devices) {
-  if (devices.size() == devices_.size()) {
-    bool same_ids = true;
-    for (const auto& new_dev : devices) {
-      bool found = false;
-      for (const auto& old_dev : devices_) {
-        if (old_dev.id == new_dev.id) {
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        same_ids = false;
-        break;
-      }
-    }
-    if (same_ids) {
-      for (auto& old_dev : devices_) {
-        for (const auto& new_dev : devices) {
-          if (old_dev.id == new_dev.id) {
-            old_dev.display_name = new_dev.display_name;
-            old_dev.platform = new_dev.platform;
-            old_dev.avatar_initial = new_dev.avatar_initial;
-            old_dev.avatar_color = new_dev.avatar_color;
-            old_dev.selected = new_dev.selected;
-            break;
-          }
-        }
-      }
-      if (hwnd_ != nullptr) {
-        InvalidateRect(hwnd_, nullptr, TRUE);
-      }
-      return;
-    }
-  }
-
-  devices_ = std::move(devices);
-  scroll_x_ = 0;
-  if (hwnd_ != nullptr) {
-    scroll_x_ = (std::min)(scroll_x_,
-                           MaxScroll(static_cast<int>(devices_.size()),
-                                     kExpandedWidth - 20));
-    InvalidateRect(hwnd_, nullptr, TRUE);
-  }
-}
-
-void QuickDropShelf::Destroy() {
-  RevokeDropTarget();
-  if (hwnd_ != nullptr) {
-    KillTimer(hwnd_, 1);
-    KillTimer(hwnd_, 2);
-    KillTimer(hwnd_, 3);
-    DestroyWindow(hwnd_);
-    hwnd_ = nullptr;
-  }
-  if (app_icon_ != nullptr) {
-    DestroyIcon(app_icon_);
-    app_icon_ = nullptr;
-  }
-  if (ole_initialized_) {
-    OleUninitialize();
-    ole_initialized_ = false;
-  }
+  if (!hwnd_ && !Create(owner)) return;
+  enabled_ = drag_monitor_.Start(hwnd_, kDragChanged);
+  // Remain invisible until a Shell item drag has been observed.
 }
 
 bool QuickDropShelf::Create(HWND owner) {
   owner_ = owner;
   if (!ole_initialized_) {
-    const HRESULT result = OleInitialize(nullptr);
-    ole_initialized_ = SUCCEEDED(result);
+    if (FAILED(OleInitialize(nullptr))) return false;
+    ole_initialized_ = true;
   }
+  WNDCLASSW cls = {};
+  cls.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  cls.lpszClassName = kShelfClassName;
+  cls.hInstance = GetModuleHandle(nullptr);
+  cls.lpfnWndProc = WndProc;
+  if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
   hwnd_ = CreateWindowExW(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
-      WindowClassRegistrar::GetClassName(), L"LocalChat quick drop shelf",
-      WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandle(nullptr), this);
-  if (hwnd_ == nullptr) {
+      kShelfClassName, L"LocalChat 文件投递", WS_POPUP,
+      0, 0, 1, 1, nullptr, nullptr, GetModuleHandle(nullptr), this);
+  if (!hwnd_) return false;
+  app_icon_ = static_cast<HICON>(LoadImageW(GetModuleHandle(nullptr),
+      MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR));
+  drop_target_ = new DropTarget(this);
+  if (FAILED(RegisterDragDrop(hwnd_, drop_target_))) {
+    drop_target_->Release();
+    drop_target_ = nullptr;
+    DestroyWindow(hwnd_);
+    hwnd_ = nullptr;
     return false;
   }
-  app_icon_ = static_cast<HICON>(LoadImageW(
-      GetModuleHandle(nullptr),
-      MAKEINTRESOURCE(IDI_APP_ICON),
-      IMAGE_ICON,
-      24, 24,
-      LR_DEFAULTCOLOR));
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), 150, LWA_COLORKEY | LWA_ALPHA);
-  RegisterDropTarget();
+  SetLayeredWindowAttributes(hwnd_, 0, kOpacity, LWA_ALPHA);
   return true;
 }
 
-void QuickDropShelf::RegisterDropTarget() {
-  if (hwnd_ == nullptr || drop_target_ != nullptr) return;
-  drop_target_ = new DropTarget(this);
-  HRESULT result = RegisterDragDrop(hwnd_, drop_target_);
-  if (FAILED(result)) {
-    delete drop_target_;
-    drop_target_ = nullptr;
+void QuickDropShelf::Destroy() {
+  enabled_ = false;
+  drag_monitor_.Stop();
+  Hide();
+  if (hwnd_ && drop_target_) RevokeDragDrop(hwnd_);
+  if (drop_target_) { drop_target_->Release(); drop_target_ = nullptr; }
+  if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
+  if (app_icon_) { DestroyIcon(app_icon_); app_icon_ = nullptr; }
+  if (ole_initialized_) { OleUninitialize(); ole_initialized_ = false; }
+}
+
+void QuickDropShelf::UpdateDevices(std::vector<QuickDropDevice> devices) {
+  devices_ = std::move(devices);
+  if (state_ != State::hidden) {
+    for (auto& shown : drag_devices_) {
+      const auto latest = std::find_if(devices_.begin(), devices_.end(),
+          [&](const QuickDropDevice& item) { return item.id == shown.id; });
+      if (latest != devices_.end()) shown = *latest;
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
   }
 }
 
-void QuickDropShelf::RevokeDropTarget() {
-  if (hwnd_ != nullptr && drop_target_ != nullptr) {
-    RevokeDragDrop(hwnd_);
-    delete drop_target_;
-    drop_target_ = nullptr;
-  }
-}
+int QuickDropShelf::Scale(int value) const { return MulDiv(value, dpi_, 96); }
 
-void QuickDropShelf::LayoutCollapsed() {
-  expanded_ = false;
-  state_ = STATE_COLLAPSED;
+void QuickDropShelf::ShowForDrag(POINT point) {
+  if (!enabled_ || !hwnd_) return;
+  KillTimer(hwnd_, kEndTimer);
+  if (state_ != State::hidden) return;
+  drag_devices_ = devices_;
+  state_ = State::prompt;
+  scroll_x_ = 0;
   hover_index_ = -1;
-
-  if (x_ == -1 && y_ == -1) {
-    HMONITOR monitor = MonitorFromWindow(owner_, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoW(monitor, &monitor_info);
-    const RECT work = monitor_info.rcWork;
-    x_ = work.right - kCollapsedWidth - 100;
-    y_ = work.bottom - kCollapsedHeight - 150;
-  }
-
-  SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, kCollapsedWidth, kCollapsedHeight,
-               SWP_NOACTIVATE | SWP_SHOWWINDOW);
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), 150, LWA_COLORKEY | LWA_ALPHA);
-  InvalidateRect(hwnd_, nullptr, TRUE);
+  shown_at_ = GetTickCount64();
+  Layout(point);
+  SetLayeredWindowAttributes(hwnd_, 0, 0, LWA_ALPHA);
+  ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+  SetTimer(hwnd_, kWatchTimer, 30, nullptr);
+  InvalidateRect(hwnd_, nullptr, FALSE);
+  UpdateWindow(hwnd_);
 }
 
-void QuickDropShelf::LayoutExpanded() {
-  expanded_ = true;
-  state_ = STATE_PROMPT;
+void QuickDropShelf::Hide() {
+  if (!hwnd_) return;
+  KillTimer(hwnd_, kWatchTimer);
+  KillTimer(hwnd_, kEndTimer);
+  KillTimer(hwnd_, kLeaveTimer);
+  ShowWindow(hwnd_, SW_HIDE);
+  state_ = State::hidden;
   hover_index_ = -1;
-
-  if (x_ == -1 && y_ == -1) {
-    LayoutCollapsed();
-  }
-
-  const int cx = x_ + kCollapsedWidth / 2;
-  const int cy = y_ + kCollapsedHeight / 2;
-
-  int ex = cx - kExpandedWidth / 2;
-  int ey = cy - kExpandedHeight / 2;
-
-  HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY);
-  MONITORINFO monitor_info = {};
-  monitor_info.cbSize = sizeof(monitor_info);
-  GetMonitorInfoW(monitor, &monitor_info);
-  const RECT work = monitor_info.rcWork;
-
-  if (ex < work.left + 10) ex = work.left + 10;
-  if (ex + kExpandedWidth > work.right - 10) ex = work.right - kExpandedWidth - 10;
-  if (ey < work.top + 10) ey = work.top + 10;
-  if (ey + kExpandedHeight > work.bottom - 10) ey = work.bottom - kExpandedHeight - 10;
-
-  SetWindowPos(hwnd_, HWND_TOPMOST, ex, ey, kExpandedWidth, kExpandedHeight,
-               SWP_NOACTIVATE | SWP_SHOWWINDOW);
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), 240, LWA_COLORKEY | LWA_ALPHA);
-  InvalidateRect(hwnd_, nullptr, TRUE);
+  ole_drag_active_ = false;
+  drag_devices_.clear();
 }
 
 void QuickDropShelf::SetExpanded(bool expanded) {
-  if (hwnd_ == nullptr) return;
-  if (expanded == expanded_) return;
-  
-  StartAnimation(expanded);
+  if (state_ == State::hidden) return;
+  state_ = expanded ? State::devices : State::prompt;
+  hover_index_ = -1;
+  POINT point;
+  GetCursorPos(&point);
+  Layout(point);
+  InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void QuickDropShelf::StartAnimation(bool expanding) {
-  if (hwnd_ == nullptr) return;
-
-  if (x_ == -1 && y_ == -1) {
-    HMONITOR monitor = MonitorFromWindow(owner_, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoW(monitor, &monitor_info);
-    const RECT work = monitor_info.rcWork;
-    x_ = work.right - kCollapsedWidth - 100;
-    y_ = work.bottom - kCollapsedHeight - 150;
-  }
-
-  anim_active_ = true;
-  anim_expanding_ = expanding;
-  anim_start_time_ = GetTickCount64();
-
-  RECT current_rect = {};
-  GetWindowRect(hwnd_, &current_rect);
-  anim_start_x_ = current_rect.left;
-  anim_start_y_ = current_rect.top;
-  anim_start_w_ = current_rect.right - current_rect.left;
-  anim_start_h_ = current_rect.bottom - current_rect.top;
-  anim_start_alpha_ = expanded_ ? 240 : 150;
-
-  expanded_ = expanding;
-  if (expanding) {
-    state_ = STATE_PROMPT;
-
-    const int cx = x_ + kCollapsedWidth / 2;
-    const int cy = y_ + kCollapsedHeight / 2;
-
-    int ex = cx - kExpandedWidth / 2;
-    int ey = cy - kExpandedHeight / 2;
-
-    HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoW(monitor, &monitor_info);
-    const RECT work = monitor_info.rcWork;
-
-    if (ex < work.left + 10) ex = work.left + 10;
-    if (ex + kExpandedWidth > work.right - 10) ex = work.right - kExpandedWidth - 10;
-    if (ey < work.top + 10) ey = work.top + 10;
-    if (ey + kExpandedHeight > work.bottom - 10) ey = work.bottom - kExpandedHeight - 10;
-
-    anim_target_x_ = ex;
-    anim_target_y_ = ey;
-    anim_target_w_ = kExpandedWidth;
-    anim_target_h_ = kExpandedHeight;
-    anim_target_alpha_ = 240;
-  } else {
-    anim_target_x_ = x_;
-    anim_target_y_ = y_;
-    anim_target_w_ = kCollapsedWidth;
-    anim_target_h_ = kCollapsedHeight;
-    anim_target_alpha_ = 150;
-  }
-
-  SetTimer(hwnd_, 1, 10, nullptr);
+void QuickDropShelf::Layout(POINT point) {
+  if (laying_out_) return;
+  laying_out_ = true;
+  monitor_ = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info = {sizeof(info)};
+  if (!GetMonitorInfoW(monitor_, &info)) { laying_out_ = false; return; }
+  // Move onto the destination monitor before reading its effective window DPI.
+  // NOREDRAW prevents an intermediate frame at the positioning probe.
+  SetWindowPos(hwnd_, HWND_TOPMOST, info.rcWork.left + 1, info.rcWork.top + 1,
+      0, 0, SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOREDRAW);
+  dpi_ = GetDpiForWindow(hwnd_);
+  if (!dpi_) dpi_ = 96;
+  const int width = Scale(state_ == State::devices ? kExpandedWidth : kPromptWidth);
+  const int height = Scale(state_ == State::devices ? kExpandedHeight : kPromptHeight);
+  const int x = (std::max)(info.rcWork.left, info.rcWork.right - width - Scale(16));
+  const int y = (std::max)(info.rcWork.top, info.rcWork.bottom - height - Scale(16));
+  SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+  SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, width + 1, height + 1,
+      Scale(14), Scale(14)), TRUE);
+  laying_out_ = false;
 }
 
-void QuickDropShelf::AnimateStep() {
-  if (!anim_active_ || hwnd_ == nullptr) {
-    KillTimer(hwnd_, 1);
-    return;
-  }
-
-  ULONGLONG elapsed = GetTickCount64() - anim_start_time_;
-  double progress = static_cast<double>(elapsed) / 150.0;
-
-  if (progress >= 1.0) {
-    progress = 1.0;
-    anim_active_ = false;
-    KillTimer(hwnd_, 1);
-  }
-
-  double eased = 1.0 - (1.0 - progress) * (1.0 - progress) * (1.0 - progress);
-
-  int w = static_cast<int>(anim_start_w_ + (anim_target_w_ - anim_start_w_) * eased);
-  int h = static_cast<int>(anim_start_h_ + (anim_target_h_ - anim_start_h_) * eased);
-
-  int x = static_cast<int>(anim_start_x_ + (anim_target_x_ - anim_start_x_) * eased);
-  int y = static_cast<int>(anim_start_y_ + (anim_target_y_ - anim_start_y_) * eased);
-
-  int alpha = static_cast<int>(anim_start_alpha_ + (anim_target_alpha_ - anim_start_alpha_) * eased);
-
-  SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), static_cast<BYTE>(alpha), LWA_COLORKEY | LWA_ALPHA);
-
-  if (!anim_active_ && !anim_expanding_) {
-    state_ = STATE_COLLAPSED;
-    hover_index_ = -1;
-  }
-
-  InvalidateRect(hwnd_, nullptr, TRUE);
+bool QuickDropShelf::IsAvailable(const std::string& id) const {
+  return std::any_of(devices_.begin(), devices_.end(),
+      [&](const QuickDropDevice& device) { return device.id == id; });
 }
-
-void QuickDropShelf::WakeUp() {
-  if (state_ != STATE_HIDDEN_BAR || hwnd_ == nullptr) return;
-
-  KillTimer(hwnd_, 3);
-  state_ = STATE_COLLAPSED;
-  last_active_time_ = GetTickCount64();
-
-  SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, kCollapsedWidth, kCollapsedHeight, SWP_NOACTIVATE);
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), 150, LWA_COLORKEY | LWA_ALPHA);
-  InvalidateRect(hwnd_, nullptr, TRUE);
+RECT QuickDropShelf::CardsClip() const {
+  return {Scale(28), Scale(8), Scale(kExpandedWidth - 28), Scale(108)};
 }
-
-void QuickDropShelf::TransitionToHiddenBar() {
-  if (state_ != STATE_COLLAPSED || hwnd_ == nullptr) return;
-
-  state_ = STATE_HIDDEN_BAR;
-  pulse_angle_ = 0.0;
-
-  HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY);
-  MONITORINFO monitor_info = {};
-  monitor_info.cbSize = sizeof(monitor_info);
-  GetMonitorInfoW(monitor, &monitor_info);
-  const RECT work = monitor_info.rcWork;
-
-  int bx = x_;
-  int by = y_;
-  int bw = kCollapsedWidth;
-  int bh = kCollapsedHeight;
-
-  if (x_ <= work.left + 5) {
-    bw = 8;
-    bh = 60;
-    by = y_ + (kCollapsedHeight - 60) / 2;
-  } else if (x_ >= work.right - kCollapsedWidth - 5) {
-    bw = 8;
-    bh = 60;
-    bx = work.right - 8;
-    by = y_ + (kCollapsedHeight - 60) / 2;
-  } else if (y_ <= work.top + 5) {
-    bw = 60;
-    bh = 8;
-    bx = x_ + (kCollapsedWidth - 60) / 2;
-  } else if (y_ >= work.bottom - kCollapsedHeight - 5) {
-    bw = 60;
-    bh = 8;
-    bx = x_ + (kCollapsedWidth - 60) / 2;
-    by = work.bottom - 8;
-  } else {
-    state_ = STATE_COLLAPSED;
-    return;
-  }
-
-  SetWindowPos(hwnd_, HWND_TOPMOST, bx, by, bw, bh, SWP_NOACTIVATE);
-  SetLayeredWindowAttributes(hwnd_, RGB(10, 20, 30), 220, LWA_COLORKEY | LWA_ALPHA);
-
-  SetTimer(hwnd_, 3, 30, nullptr);
-  InvalidateRect(hwnd_, nullptr, TRUE);
+RECT QuickDropShelf::CardRect(int index) const {
+  const int count = static_cast<int>(drag_devices_.size());
+  const int start = count <= 4
+      ? (kExpandedWidth - count * 80 - (count - 1) * 10) / 2 : 32;
+  const int left = Scale(start + index * 90 - scroll_x_);
+  return {left, Scale(12), left + Scale(80), Scale(104)};
 }
-
-void QuickDropShelf::Paint() {
-  PAINTSTRUCT ps = {};
-  HDC hdc = BeginPaint(hwnd_, &ps);
-  RECT client = {};
-  GetClientRect(hwnd_, &client);
-  const int width = client.right - client.left;
-  const int height = client.bottom - client.top;
-
-  if (state_ == STATE_HIDDEN_BAR) {
-    HBRUSH bg_brush = CreateSolidBrush(RGB(10, 20, 30));
-    FillRect(hdc, &client, bg_brush);
-    DeleteObject(bg_brush);
-
-    double factor = (sin(pulse_angle_) + 1.0) / 2.0;
-    int r = 13 + static_cast<int>((45 - 13) * factor);
-    int g = 70 + static_cast<int>((212 - 70) * factor);
-    int b = 70 + static_cast<int>((191 - 70) * factor);
-
-    RECT bar_rect = { 0, 0, width, height };
-    FillRoundRect(hdc, bar_rect, 4, RGB(r, g, b));
-
-    EndPaint(hwnd_, &ps);
-    return;
-  }
-
-  if (state_ == STATE_COLLAPSED && !anim_active_) {
-    HBRUSH bg_brush = CreateSolidBrush(RGB(10, 20, 30));
-    FillRect(hdc, &client, bg_brush);
-    DeleteObject(bg_brush);
-
-    int r = 25;
-    RECT circle_rect = { width / 2 - r, height / 2 - r, width / 2 + r, height / 2 + r };
-
-    HBRUSH circle_brush = CreateSolidBrush(RGB(13, 148, 136));
-    HPEN circle_pen = CreatePen(PS_SOLID, 1, RGB(13, 148, 136));
-    HGDIOBJ old_brush = SelectObject(hdc, circle_brush);
-    HGDIOBJ old_pen = SelectObject(hdc, circle_pen);
-    Ellipse(hdc, circle_rect.left, circle_rect.top, circle_rect.right, circle_rect.bottom);
-    SelectObject(hdc, old_brush);
-    SelectObject(hdc, old_pen);
-    DeleteObject(circle_brush);
-    DeleteObject(circle_pen);
-
-    if (app_icon_ != nullptr) {
-      DrawIconEx(hdc, width / 2 - 12, height / 2 - 12, app_icon_, 24, 24, 0, nullptr, DI_NORMAL);
-    } else {
-      HFONT icon_font = CreateUiFont(16, FW_BOLD);
-      HGDIOBJ old_font = SelectObject(hdc, icon_font);
-      SetTextColor(hdc, RGB(255, 255, 255));
-      SetBkMode(hdc, TRANSPARENT);
-      RECT text_rect = circle_rect;
-      text_rect.top += 1;
-      text_rect.bottom += 1;
-      DrawTextW(hdc, L"✈", -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-      SelectObject(hdc, old_font);
-      DeleteObject(icon_font);
-    }
-
-    EndPaint(hwnd_, &ps);
-    return;
-  }
-
-  HBRUSH bg_brush = CreateSolidBrush(RGB(10, 20, 30));
-  FillRect(hdc, &client, bg_brush);
-  DeleteObject(bg_brush);
-
-  RECT card_rect = {10, 10, width - 10, height - 10};
-  FillRoundRect(hdc, card_rect, 12, RGB(255, 255, 255));
-  StrokeRoundRect(hdc, card_rect, 12, RGB(226, 232, 240), 1);
-
-  SetBkMode(hdc, TRANSPARENT);
-
-  if (state_ == STATE_PROMPT) {
-    if (width > 200) {
-      HFONT prompt_font = CreateUiFont(15, FW_NORMAL);
-      HGDIOBJ old_font = SelectObject(hdc, prompt_font);
-      SetTextColor(hdc, RGB(100, 116, 139));
-      DrawTextW(hdc, L"可以放入文件来分享", -1, &card_rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-      SelectObject(hdc, old_font);
-      DeleteObject(prompt_font);
-    }
-  } else if (state_ == STATE_DEVICES) {
-    if (devices_.empty()) {
-      HFONT empty_font = CreateUiFont(14, FW_NORMAL);
-      HGDIOBJ old_font = SelectObject(hdc, empty_font);
-      SetTextColor(hdc, RGB(100, 116, 139));
-      DrawTextW(hdc, L"无在线的信任设备", -1, &card_rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-      SelectObject(hdc, old_font);
-      DeleteObject(empty_font);
-    } else {
-      IntersectClipRect(hdc, 20, 10, width - 20, height - 10);
-
-      const int n = static_cast<int>(devices_.size());
-      const int item_width = 80;
-      const int item_height = 82;
-      const int item_gap = 10;
-
-      int start_x = 0;
-      if (n <= 5) {
-        const int total_items_width = n * item_width + (n - 1) * item_gap;
-        start_x = (width - total_items_width) / 2;
-      } else {
-        start_x = 30 - scroll_x_;
-      }
-
-      HFONT name_font = CreateUiFont(12, FW_NORMAL);
-      HFONT avatar_font = CreateUiFont(16, FW_BOLD);
-
-      for (int i = 0; i < n; ++i) {
-        const auto& device = devices_[i];
-        const int item_left = start_x + i * (item_width + item_gap);
-        const int item_top = 22;
-        RECT item_rect = {item_left, item_top, item_left + item_width, item_top + item_height};
-
-        if (item_rect.right < 20 || item_rect.left > width - 20) continue;
-
-        const bool hover = (i == hover_index_);
-
-        if (hover) {
-          RECT hover_rect = {item_left, 14, item_left + item_width, 108};
-          FillRoundRect(hdc, hover_rect, 8, RGB(240, 253, 250));
-          StrokeRoundRect(hdc, hover_rect, 8, RGB(45, 212, 191), 1);
-        }
-
-        RECT avatar = {item_left + 18, item_top, item_left + 62, item_top + 44};
-        COLORREF av_color = ColorFromHex(device.avatar_color, RGB(37, 99, 235));
-        HBRUSH av_brush = CreateSolidBrush(av_color);
-        HPEN av_pen = CreatePen(PS_SOLID, 1, av_color);
-        HGDIOBJ old_brush = SelectObject(hdc, av_brush);
-        HGDIOBJ old_pen = SelectObject(hdc, av_pen);
-        Ellipse(hdc, avatar.left, avatar.top, avatar.right, avatar.bottom);
-        SelectObject(hdc, old_brush);
-        SelectObject(hdc, old_pen);
-        DeleteObject(av_brush);
-        DeleteObject(av_pen);
-
-        HGDIOBJ old_font = SelectObject(hdc, avatar_font);
-        SetTextColor(hdc, RGB(255, 255, 255));
-        RECT avatar_text_rect = avatar;
-        const std::wstring initial = Utf8ToWide(device.avatar_initial);
-        DrawTextW(hdc, initial.c_str(), -1, &avatar_text_rect,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-        SelectObject(hdc, name_font);
-        SetTextColor(hdc, RGB(51, 65, 85));
-        RECT name_rect = {item_left, item_top + 46, item_left + item_width, item_top + 82};
-        const std::wstring name = Utf8ToWide(device.display_name);
-        DrawTextW(hdc, name.c_str(), -1, &name_rect,
-                  DT_CENTER | DT_NOPREFIX | DT_WORDBREAK | DT_END_ELLIPSIS);
-
-        SelectObject(hdc, old_font);
-      }
-
-      DeleteObject(name_font);
-      DeleteObject(avatar_font);
-
-      SelectClipRgn(hdc, nullptr);
-    }
-  }
-
-  EndPaint(hwnd_, &ps);
+int QuickDropShelf::MaxScroll() const {
+  const int count = static_cast<int>(drag_devices_.size());
+  return count <= 4 ? 0 : (std::max)(0, count * 80 + (count - 1) * 10 - 356);
 }
-
-int QuickDropShelf::HitTest(POINT screen_point) const {
-  if (hwnd_ == nullptr || devices_.empty() || state_ != STATE_DEVICES) return -1;
-  POINT client_point = screen_point;
-  ScreenToClient(hwnd_, &client_point);
-
-  const int n = static_cast<int>(devices_.size());
-  const int item_width = 80;
-  const int item_height = 82;
-  const int item_gap = 10;
-
-  int start_x = 0;
-  if (n <= 5) {
-    const int total_items_width = n * item_width + (n - 1) * item_gap;
-    start_x = (kExpandedWidth - total_items_width) / 2;
-  } else {
-    start_x = 30 - scroll_x_;
-  }
-
-  for (int i = 0; i < n; ++i) {
-    const int item_left = start_x + i * (item_width + item_gap);
-    const int item_top = 22;
-    RECT item_rect = {item_left, item_top, item_left + item_width, item_top + item_height};
-
-    if (client_point.x >= item_rect.left && client_point.x <= item_rect.right &&
-        client_point.y >= item_rect.top && client_point.y <= item_rect.bottom) {
-      return i;
-    }
+int QuickDropShelf::HitTest(POINT point) const {
+  if (state_ != State::devices) return -1;
+  ScreenToClient(hwnd_, &point);
+  const RECT clip = CardsClip();
+  if (!PtInRect(&clip, point)) return -1;
+  for (int index = 0; index < static_cast<int>(drag_devices_.size()); ++index) {
+    const RECT rect = CardRect(index);
+    if (PtInRect(&rect, point) && IsAvailable(drag_devices_[index].id)) return index;
   }
   return -1;
 }
-
-void QuickDropShelf::ScrollToward(POINT screen_point) {
-  if (hwnd_ == nullptr || devices_.empty() || state_ != STATE_DEVICES) return;
-  POINT client_point = screen_point;
-  ScreenToClient(hwnd_, &client_point);
-
-  const int max_scroll = MaxScroll(static_cast<int>(devices_.size()), kExpandedWidth - 20);
-  if (max_scroll <= 0) return;
-
-  int next_scroll = scroll_x_;
-  if (client_point.x > 10 && client_point.x < 70) {
-    next_scroll -= 8;
-  } else if (client_point.x < kExpandedWidth - 10 && client_point.x > kExpandedWidth - 70) {
-    next_scroll += 8;
+int QuickDropShelf::DropIndex(POINT point) const {
+  const int index = HitTest(point);
+  if (index >= 0) return index;
+  if (state_ != State::hidden && drag_devices_.size() == 1 &&
+      IsAvailable(drag_devices_.front().id)) {
+    RECT rect;
+    GetWindowRect(hwnd_, &rect);
+    if (PtInRect(&rect, point)) return 0;
   }
-
-  next_scroll = (std::max)(0, (std::min)(next_scroll, max_scroll));
-  if (next_scroll != scroll_x_) {
-    scroll_x_ = next_scroll;
-    InvalidateRect(hwnd_, nullptr, TRUE);
+  return -1;
+}
+void QuickDropShelf::ScrollToward(POINT point) {
+  if (state_ != State::devices || MaxScroll() == 0) return;
+  ScreenToClient(hwnd_, &point);
+  if (point.y < Scale(8) || point.y > Scale(108)) return;
+  int next = scroll_x_;
+  if (point.x < Scale(48)) next -= 8;
+  if (point.x > Scale(kExpandedWidth - 48)) next += 8;
+  next = (std::clamp)(next, 0, MaxScroll());
+  if (next != scroll_x_) {
+    scroll_x_ = next;
+    InvalidateRect(hwnd_, nullptr, FALSE);
   }
 }
-
-void QuickDropShelf::NotifyDrop(
-    int device_index,
-    const std::vector<std::string>& paths) {
-  if (device_index < 0 ||
-      device_index >= static_cast<int>(devices_.size()) ||
-      !drop_callback_) {
-    return;
-  }
-  drop_callback_(devices_[device_index].id, paths);
+void QuickDropShelf::NotifyDrop(int index, const std::vector<std::string>& paths) {
+  if (index < 0 || index >= static_cast<int>(drag_devices_.size()) ||
+      !IsAvailable(drag_devices_[index].id) || !drop_callback_) return;
+  drop_callback_(drag_devices_[index].id, paths);
 }
 
-LRESULT CALLBACK QuickDropShelf::WndProc(HWND hwnd,
-                                         UINT message,
-                                         WPARAM wparam,
+void QuickDropShelf::Paint() {
+  PAINTSTRUCT paint;
+  HDC target = BeginPaint(hwnd_, &paint);
+  RECT client;
+  GetClientRect(hwnd_, &client);
+  HDC dc = CreateCompatibleDC(target);
+  HBITMAP bitmap = CreateCompatibleBitmap(target, client.right, client.bottom);
+  HGDIOBJ old_bitmap = SelectObject(dc, bitmap);
+  HBRUSH background = CreateSolidBrush(RGB(39, 43, 47));
+  FillRect(dc, &client, background);
+  DeleteObject(background);
+  SetBkMode(dc, TRANSPARENT);
+  const int footer = client.bottom - Scale(kPromptHeight);
+  HFONT body = UiFont(Scale(13));
+  HGDIOBJ old_font = SelectObject(dc, body);
+  SetTextColor(dc, RGB(232, 237, 241));
+  DrawIconEx(dc, Scale(16), footer + Scale(16), app_icon_, Scale(20), Scale(20),
+      0, nullptr, DI_NORMAL);
+  RECT label = {Scale(48), footer, client.right - Scale(14), client.bottom};
+  const wchar_t* prompt = state_ == State::prompt
+      ? L"拖到这里，发送到其他设备" : L"拖到设备上松开，即可发送";
+  if (drag_devices_.empty()) prompt = L"暂无在线设备，打开 LocalChat 配对";
+  DrawTextW(dc, prompt, -1, &label,
+      DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+  if (state_ == State::devices) {
+    RECT divider = {Scale(16), footer, client.right - Scale(16), footer + 1};
+    HBRUSH line = CreateSolidBrush(RGB(65, 70, 75));
+    FillRect(dc, &divider, line);
+    DeleteObject(line);
+    if (drag_devices_.empty()) {
+      RECT empty = {Scale(20), Scale(18), client.right - Scale(20), footer - Scale(8)};
+      SetTextColor(dc, RGB(162, 174, 183));
+      DrawTextW(dc, L"请先配对设备，并保持两端在线", -1, &empty,
+          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    const RECT clip = CardsClip();
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, clip.left, clip.top, clip.right, clip.bottom);
+    HFONT name = UiFont(Scale(12));
+    HFONT initial = UiFont(Scale(16), FW_SEMIBOLD);
+    for (int index = 0; index < static_cast<int>(drag_devices_.size()); ++index) {
+      const auto& device = drag_devices_[index];
+      const bool available = IsAvailable(device.id);
+      const RECT rect = CardRect(index);
+      if (index == hover_index_ && available) {
+        RoundFill(dc, rect, Scale(12), RGB(31, 120, 96));
+      }
+      const int center = (rect.left + rect.right) / 2;
+      const RECT avatar = {center - Scale(18), rect.top + Scale(7),
+          center + Scale(18), rect.top + Scale(43)};
+      RoundFill(dc, avatar, Scale(14), available ? ColorFromHex(device.avatar_color)
+                                               : RGB(76, 81, 87));
+      SelectObject(dc, initial);
+      SetTextColor(dc, RGB(255, 255, 255));
+      RECT initial_rect = avatar;
+      const std::wstring letter = Utf8ToWide(device.avatar_initial);
+      DrawTextW(dc, letter.c_str(), -1, &initial_rect,
+          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+      SelectObject(dc, name);
+      SetTextColor(dc, available ? RGB(232, 237, 241) : RGB(133, 140, 146));
+      RECT text = {rect.left + Scale(3), rect.top + Scale(49),
+          rect.right - Scale(3), rect.bottom};
+      const std::wstring title = available ? Utf8ToWide(device.display_name) : L"设备已离线";
+      DrawTextW(dc, title.c_str(), -1, &text,
+          DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+    RestoreDC(dc, saved);
+    DeleteObject(name);
+    DeleteObject(initial);
+    if (MaxScroll() > 0) {
+      SetTextColor(dc, RGB(172, 182, 190));
+      RECT left = {Scale(5), Scale(24), Scale(25), Scale(88)};
+      RECT right = {client.right - Scale(25), Scale(24), client.right - Scale(5), Scale(88)};
+      if (scroll_x_ > 0) DrawTextW(dc, L"‹", -1, &left, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+      if (scroll_x_ < MaxScroll()) DrawTextW(dc, L"›", -1, &right, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+  }
+  SelectObject(dc, old_font);
+  DeleteObject(body);
+  BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
+  SelectObject(dc, old_bitmap);
+  DeleteObject(bitmap);
+  DeleteDC(dc);
+  EndPaint(hwnd_, &paint);
+}
+
+LRESULT CALLBACK QuickDropShelf::WndProc(HWND hwnd, UINT message, WPARAM wparam,
                                          LPARAM lparam) {
   if (message == WM_NCCREATE) {
-    auto create_struct = reinterpret_cast<CREATESTRUCTW*>(lparam);
-    auto shelf = static_cast<QuickDropShelf*>(create_struct->lpCreateParams);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(shelf));
+    auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
   }
-  auto shelf = reinterpret_cast<QuickDropShelf*>(
-      GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-  if (shelf != nullptr) {
-    return shelf->HandleMessage(hwnd, message, wparam, lparam);
-  }
-  return DefWindowProcW(hwnd, message, wparam, lparam);
+  auto* shelf = reinterpret_cast<QuickDropShelf*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  return shelf ? shelf->HandleMessage(hwnd, message, wparam, lparam)
+               : DefWindowProcW(hwnd, message, wparam, lparam);
 }
-
-void QuickDropShelf::ShowContextMenu(int x, int y) {
-  if (anim_active_) return;
-  last_active_time_ = GetTickCount64();
-  HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, 1, L"隐藏拖拽悬浮窗");
-  SetForegroundWindow(hwnd_);
-  int track_flags = TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY;
-  int cmd = TrackPopupMenu(menu, track_flags, x, y, 0, hwnd_, nullptr);
-  DestroyMenu(menu);
-  if (cmd == 1) {
-    if (hide_callback_) {
-      hide_callback_();
-    }
-  }
-}
-
-LRESULT QuickDropShelf::HandleMessage(HWND hwnd,
-                                      UINT message,
-                                      WPARAM wparam,
+LRESULT QuickDropShelf::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
                                       LPARAM lparam) {
   switch (message) {
-    case WM_PAINT:
-      Paint();
-      return 0;
-    case WM_CONTEXTMENU: {
-      if (anim_active_) return 0;
-      int x = static_cast<short>(LOWORD(lparam));
-      int y = static_cast<short>(HIWORD(lparam));
-      if (x == -1 && y == -1) {
-        POINT pt;
-        GetCursorPos(&pt);
-        x = pt.x;
-        y = pt.y;
+    case kDragChanged: {
+      if (!enabled_) return 0;
+      if (drag_monitor_.IsDragging()) {
+        POINT cursor;
+        GetCursorPos(&cursor);
+        ShowForDrag(cursor);
+      } else if (state_ != State::hidden) {
+        // OLE can deliver Drop after the low-level button-up notification.
+        SetTimer(hwnd_, kEndTimer, 120, nullptr);
       }
-      ShowContextMenu(x, y);
       return 0;
     }
-    case WM_NCRBUTTONUP: {
-      if (state_ == STATE_COLLAPSED && !anim_active_) {
-        int x = static_cast<short>(LOWORD(lparam));
-        int y = static_cast<short>(HIWORD(lparam));
-        ShowContextMenu(x, y);
+    case WM_TIMER:
+      if (wparam == kEndTimer) { Hide(); return 0; }
+      if (wparam == kLeaveTimer) {
+        KillTimer(hwnd, kLeaveTimer);
+        if (!ole_drag_active_) {
+          if (drag_monitor_.IsDragging()) SetExpanded(false);
+          else Hide();
+        }
         return 0;
       }
-      return DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-    case WM_NCHITTEST: {
-      if (state_ == STATE_COLLAPSED && !anim_active_) {
-        last_active_time_ = GetTickCount64();
-        return HTCAPTION;
-      }
-      return HTCLIENT;
-    }
-    case WM_MOUSEMOVE: {
-      last_active_time_ = GetTickCount64();
-      if (state_ == STATE_HIDDEN_BAR) {
-        WakeUp();
-      }
-      return 0;
-    }
-    case WM_EXITSIZEMOVE: {
-      if (state_ == STATE_COLLAPSED && !anim_active_) {
-        RECT rect = {};
-        GetWindowRect(hwnd, &rect);
-        x_ = rect.left;
-        y_ = rect.top;
-
-        HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-        MONITORINFO monitor_info = {};
-        monitor_info.cbSize = sizeof(monitor_info);
-        GetMonitorInfoW(monitor, &monitor_info);
-        const RECT work = monitor_info.rcWork;
-
-        bool snapped = false;
-        if (x_ < work.left + 20) {
-          x_ = work.left;
-          snapped = true;
-        } else if (x_ > work.right - kCollapsedWidth - 20) {
-          x_ = work.right - kCollapsedWidth;
-          snapped = true;
-        }
-
-        if (y_ < work.top + 20) {
-          y_ = work.top;
-          snapped = true;
-        } else if (y_ > work.bottom - kCollapsedHeight - 20) {
-          y_ = work.bottom - kCollapsedHeight;
-          snapped = true;
-        }
-
-        if (snapped) {
-          SetWindowPos(hwnd, HWND_TOPMOST, x_, y_, kCollapsedWidth, kCollapsedHeight,
-                       SWP_NOACTIVATE);
-        }
-      }
-      return 0;
-    }
-    case WM_TIMER: {
-      if (wparam == 1) {
-        AnimateStep();
-      } else if (wparam == 2) {
-        if (state_ == STATE_COLLAPSED && !anim_active_ && enabled_) {
-          HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-          MONITORINFO monitor_info = {};
-          monitor_info.cbSize = sizeof(monitor_info);
-          GetMonitorInfoW(monitor, &monitor_info);
-          const RECT work = monitor_info.rcWork;
-
-          bool is_docked = (x_ <= work.left + 5 || x_ >= work.right - kCollapsedWidth - 5 ||
-                             y_ <= work.top + 5 || y_ >= work.bottom - kCollapsedHeight - 5);
-          
-          if (auto_hide_ && is_docked && (GetTickCount64() - last_active_time_ > 30000)) {
-            TransitionToHiddenBar();
-          }
-        }
-      } else if (wparam == 3) {
-        if (state_ == STATE_HIDDEN_BAR) {
-          pulse_angle_ += 0.08;
+      if (wparam == kWatchTimer && state_ != State::hidden) {
+        const ULONGLONG elapsed = (std::min)(GetTickCount64() - shown_at_, 120ULL);
+        SetLayeredWindowAttributes(hwnd, 0, static_cast<BYTE>(kOpacity * elapsed / 120), LWA_ALPHA);
+        POINT cursor;
+        GetCursorPos(&cursor);
+        if (MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) != monitor_) Layout(cursor);
+        if (ole_drag_active_) {
+          ScrollToward(cursor);
+          hover_index_ = HitTest(cursor);
           InvalidateRect(hwnd, nullptr, FALSE);
         }
-      } else if (wparam == 4) {
-        KillTimer(hwnd, 4);
-        if (drag_leave_pending_) {
-          drag_leave_pending_ = false;
-          SetExpanded(false);
-        }
       }
       return 0;
-    }
-    case WM_MOUSEWHEEL: {
-      const int max_scroll = MaxScroll(static_cast<int>(devices_.size()), kExpandedWidth - 20);
-      const int delta = GET_WHEEL_DELTA_WPARAM(wparam) > 0 ? -48 : 48;
-      scroll_x_ = (std::max)(0, (std::min)(scroll_x_ + delta, max_scroll));
-      InvalidateRect(hwnd_, nullptr, TRUE);
+    case WM_DPICHANGED:
+    case WM_DISPLAYCHANGE:
+    case WM_SETTINGCHANGE:
+      if (state_ != State::hidden && !laying_out_) {
+        POINT cursor;
+        GetCursorPos(&cursor);
+        Layout(cursor);
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
       return 0;
-    }
-    case WM_ERASEBKGND:
-      return 1;
-    default:
-      return DefWindowProcW(hwnd, message, wparam, lparam);
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_NCHITTEST: return HTCLIENT;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: Paint(); return 0;
+    case WM_CLOSE: Hide(); return 0;
+    default: return DefWindowProcW(hwnd, message, wparam, lparam);
   }
 }

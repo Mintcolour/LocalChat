@@ -15,6 +15,7 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "firewall_manager.h"
 #include "autostart.h"
+#include "automation_bridge.h"
 #include "single_instance.h"
 
 namespace {
@@ -197,8 +198,9 @@ std::vector<QuickDropDevice> ParseQuickDropDevices(
 
 }  // namespace
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool automation_start)
+    : project_(project), automation_start_(automation_start) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -271,17 +273,42 @@ bool FlutterWindow::OnCreate() {
             "quickDropFiles",
             std::make_unique<flutter::EncodableValue>(args));
       });
-  quick_drop_shelf_.SetHideCallback([this]() {
-    if (!window_channel_) {
-      return;
-    }
-    window_channel_->InvokeMethod("quickDropShelfHidden", nullptr);
-  });
   window_channel->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
         const auto& method = call.method_name();
+        if (method == "publishAutomationDescriptor") {
+          const auto* args = call.arguments();
+          const auto* map = args ? std::get_if<flutter::EncodableMap>(args) : nullptr;
+          if (map == nullptr) {
+            result->Error("invalid_arguments", "Descriptor contents required.");
+            return;
+          }
+          const auto it = map->find(flutter::EncodableValue("contents"));
+          const auto* contents = it == map->end()
+                                     ? nullptr
+                                     : std::get_if<std::string>(&it->second);
+          if (contents == nullptr) {
+            result->Error("invalid_arguments", "Descriptor contents required.");
+            return;
+          }
+          std::wstring path;
+          DWORD error = ERROR_SUCCESS;
+          if (!automation::PublishDescriptor(*contents, &path, &error)) {
+            result->Error("automation_publish_failed",
+                          "Could not secure or publish automation descriptor.",
+                          flutter::EncodableValue(static_cast<int64_t>(error)));
+            return;
+          }
+          result->Success(flutter::EncodableValue(WideToUtf8(path)));
+          return;
+        }
+        if (method == "removeAutomationDescriptor") {
+          automation::RemoveDescriptor();
+          result->Success();
+          return;
+        }
         if (method == "minimizeToTray") {
           ShowWindow(GetHandle(), SW_HIDE);
           result->Success();
@@ -340,7 +367,7 @@ bool FlutterWindow::OnCreate() {
               }
             }
           }
-          if (enabled) {
+          if (enabled || (automation_start_ && !IsWindowVisible(GetHandle()))) {
             tray_.AddTrayIcon(GetHandle());
             SetHideOnClose(true);
           } else {
@@ -360,19 +387,6 @@ bool FlutterWindow::OnCreate() {
             }
           }
           quick_drop_shelf_.SetEnabled(enabled, GetHandle());
-          result->Success();
-          return;
-        }
-        if (method == "setQuickSendAutoHide") {
-          const auto* args = call.arguments();
-          bool auto_hide = true;
-          if (args != nullptr) {
-            const auto* map = std::get_if<flutter::EncodableMap>(args);
-            if (map != nullptr) {
-              auto_hide = BoolFromMap(*map, "autoHide");
-            }
-          }
-          quick_drop_shelf_.SetAutoHide(auto_hide);
           result->Success();
           return;
         }
@@ -428,7 +442,7 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    if (!automation_start_) this->Show();
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -440,6 +454,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  automation::RemoveDescriptor();
   quick_drop_shelf_.Destroy();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

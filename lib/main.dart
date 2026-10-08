@@ -32,6 +32,7 @@ Future<void> main() async {
   final controller = AppController(
     secureKeyStore: const SecureKeyStore(),
     diagnosticLogService: diagnosticLogService,
+    enableAutomation: true,
   );
   await controller.initialize();
   runApp(LocalChatApp(controller: controller));

@@ -27,12 +27,7 @@ class StatusBar extends StatelessWidget {
               ),
             Expanded(
               child: Text(
-                controller.lastError == null
-                    ? controller.status
-                    : controller.text.statusWithError(
-                        controller.status,
-                        controller.lastError!,
-                      ),
+                controller.status,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),

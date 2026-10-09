@@ -44,13 +44,16 @@ class DiscoveryService {
   final void Function(InternetAddress address, int port, List<int> data)?
   _sendObserver;
   final _peers = StreamController<DiscoveredPeer>.broadcast();
-  final List<StreamSubscription<RawSocketEvent>> _socketSubscriptions = [];
+  final Map<RawDatagramSocket, StreamSubscription<RawSocketEvent>>
+  _socketSubscriptions = {};
   final Map<String, RawDatagramSocket> _interfaceSockets = {};
   RawDatagramSocket? _listenerSocket;
   Timer? _timer;
   Timer? _interfaceTimer;
   int _transportPort = 0;
   DiscoveryHealth _health = const DiscoveryHealth.notStarted();
+  Future<void>? _interfaceRefresh;
+  int _generation = 0;
 
   Stream<DiscoveredPeer> get peers => _peers.stream;
   DiscoveryHealth get health => _health;
@@ -96,11 +99,12 @@ class DiscoveryService {
 
     await _refreshInterfaceSockets();
     _health = DiscoveryHealth(
-      availability: listener.port == _candidatePorts.first
+      availability:
+          listener.port == _candidatePorts.first && _health.bindFailures.isEmpty
           ? DiscoveryAvailability.active
           : DiscoveryAvailability.degraded,
       boundPort: listener.port,
-      bindFailures: failures,
+      bindFailures: [...failures, ..._health.bindFailures],
       interfaceAddresses: _interfaceSockets.keys.toList()..sort(),
     );
     _timer = Timer.periodic(
@@ -116,11 +120,12 @@ class DiscoveryService {
   }
 
   Future<void> stop() async {
+    _generation++;
     _timer?.cancel();
     _timer = null;
     _interfaceTimer?.cancel();
     _interfaceTimer = null;
-    for (final subscription in _socketSubscriptions) {
+    for (final subscription in _socketSubscriptions.values.toList()) {
       await subscription.cancel();
     }
     _socketSubscriptions.clear();
@@ -130,6 +135,8 @@ class DiscoveryService {
       socket.close();
     }
     _interfaceSockets.clear();
+    await _interfaceRefresh;
+    _health = const DiscoveryHealth.notStarted();
   }
 
   Future<void> announce() async {
@@ -185,14 +192,25 @@ class DiscoveryService {
   }
 
   void _listen(RawDatagramSocket socket) {
-    _socketSubscriptions.add(
-      socket.listen(
-        (event) => _handleEvent(socket, event),
-        onError: (Object error, StackTrace stackTrace) {
-          _logger.warning('discovery.socket_error', {'error': '$error'});
-        },
-      ),
+    _socketSubscriptions[socket] = socket.listen(
+      (event) => _handleEvent(socket, event),
+      onError: (Object error, StackTrace stackTrace) {
+        _logger.warning('discovery.socket_error', {'error': '$error'});
+        _discardInterfaceSocket(socket);
+      },
     );
+  }
+
+  void _discardInterfaceSocket(RawDatagramSocket socket) {
+    final entries = _interfaceSockets.entries
+        .where((e) => e.value == socket)
+        .toList();
+    if (entries.isEmpty) return;
+    for (final entry in entries) {
+      _interfaceSockets.remove(entry.key);
+    }
+    unawaited(_socketSubscriptions.remove(socket)?.cancel());
+    socket.close();
   }
 
   Future<void> _handleEvent(
@@ -280,8 +298,24 @@ class DiscoveryService {
     }
   }
 
+  /// Also used by manual rescan after a network switch.
+  Future<void> refreshInterfaces() => _refreshInterfaceSockets();
+
   Future<void> _refreshInterfaceSockets() async {
+    final running = _interfaceRefresh;
+    if (running != null) return running;
+    final task = _updateInterfaceSockets();
+    _interfaceRefresh = task;
+    try {
+      await task;
+    } finally {
+      _interfaceRefresh = null;
+    }
+  }
+
+  Future<void> _updateInterfaceSockets() async {
     if (_listenerSocket == null) return;
+    final generation = _generation;
     List<DiscoveryInterfaceAddress> interfaces;
     try {
       interfaces = await _interfaceLoader();
@@ -289,26 +323,32 @@ class DiscoveryService {
       _logger.error('discovery.interfaces_failed', error, stackTrace);
       return;
     }
-    final privateInterfaces = interfaces
-        .where((item) => _isPrivateIpv4(item.address))
-        .toList();
-    final selected = privateInterfaces.isEmpty ? interfaces : privateInterfaces;
+    if (generation != _generation) return;
     final desired = <String, DiscoveryInterfaceAddress>{
-      for (final item in selected)
-        if (!item.address.isLoopback &&
+      for (final item in interfaces)
+        if (item.address.type == InternetAddressType.IPv4 &&
+            !item.address.isLoopback &&
             !item.address.address.startsWith('169.254.'))
           item.address.address: item,
     };
 
     for (final address in _interfaceSockets.keys.toList()) {
       if (desired.containsKey(address)) continue;
-      _interfaceSockets.remove(address)?.close();
+      _discardInterfaceSocket(_interfaceSockets[address]!);
       _logger.info('discovery.interface_removed', {'address': address});
     }
+    final failures = _health.bindFailures
+        .where((f) => f.address == null)
+        .toList();
     for (final entry in desired.entries) {
+      if (generation != _generation) return;
       if (_interfaceSockets.containsKey(entry.key)) continue;
       try {
         final socket = await _socketBinder(entry.value.address, 0);
+        if (generation != _generation) {
+          socket.close();
+          return;
+        }
         socket.broadcastEnabled = true;
         _interfaceSockets[entry.key] = socket;
         _listen(socket);
@@ -317,14 +357,34 @@ class DiscoveryService {
           'address': entry.key,
           'sourcePort': socket.port,
         });
-      } catch (error, stackTrace) {
-        _logger.error('discovery.interface_bind_failed', error, stackTrace);
+      } catch (error) {
+        final errno = error is SocketException
+            ? error.osError?.errorCode
+            : null;
+        failures.add(
+          DiscoveryBindFailure(
+            port: 0,
+            message: '$error',
+            errorCode: errno,
+            address: entry.key,
+            interfaceName: entry.value.name,
+          ),
+        );
+        _logger.warning('discovery.interface_bind_failed', {
+          'name': entry.value.name,
+          'address': entry.key,
+          'errno': errno,
+          'error': '$error',
+        });
       }
     }
     _health = DiscoveryHealth(
-      availability: _health.availability,
+      availability:
+          failures.isEmpty && _listenerSocket?.port == _candidatePorts.first
+          ? DiscoveryAvailability.active
+          : DiscoveryAvailability.degraded,
       boundPort: _listenerSocket?.port,
-      bindFailures: _health.bindFailures,
+      bindFailures: failures,
       interfaceAddresses: _interfaceSockets.keys.toList()..sort(),
     );
   }
@@ -367,6 +427,10 @@ class DiscoveryService {
         'errno': error.osError?.errorCode,
         'error': error.message,
       });
+      if (error.osError?.errorCode == 10049 ||
+          error.osError?.errorCode == 10050) {
+        _discardInterfaceSocket(sender);
+      }
     } catch (error, stackTrace) {
       _logger.error('discovery.send_failed', error, stackTrace);
     }
@@ -400,16 +464,6 @@ class DiscoveryService {
           if (address.type == InternetAddressType.IPv4)
             DiscoveryInterfaceAddress(name: interface.name, address: address),
     ];
-  }
-
-  static bool _isPrivateIpv4(InternetAddress address) {
-    final parts = address.address.split('.').map(int.tryParse).toList();
-    if (parts.length != 4 || parts.any((part) => part == null)) return false;
-    final first = parts[0]!;
-    final second = parts[1]!;
-    return first == 10 ||
-        (first == 172 && second >= 16 && second <= 31) ||
-        (first == 192 && second == 168);
   }
 
   static String _shortId(String value) =>

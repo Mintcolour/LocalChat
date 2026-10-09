@@ -78,7 +78,9 @@ class LocalChatCli {
 
   Future<int> run(List<String> arguments) async {
     var json = arguments.contains('--json');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 2)
+      ..findProxy = (_) => 'DIRECT';
     try {
       final parsed = _parser().parse(arguments);
       final command = parsed.command;

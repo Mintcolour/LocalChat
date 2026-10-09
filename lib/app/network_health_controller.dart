@@ -81,6 +81,7 @@ class NetworkHealthController extends ChangeNotifier {
 
   /// 手动重新广播发现包并刷新健康状态，返回最新健康快照字段。
   Future<DiscoveryHealth> reannounce() async {
+    await discoveryService.refreshInterfaces();
     await discoveryService.announce();
     discoveryHealth = discoveryService.health;
     _logger.info('discovery.manual_announce');
@@ -125,6 +126,7 @@ class NetworkHealthController extends ChangeNotifier {
     for (final failure in discoveryHealth.bindFailures) {
       lines.add(
         'Bind failure: port=${failure.port} errno=${failure.errorCode ?? '-'} '
+        'interface=${failure.interfaceName ?? '-'} address=${failure.address ?? '-'} '
         'detail=${failure.message}',
       );
     }

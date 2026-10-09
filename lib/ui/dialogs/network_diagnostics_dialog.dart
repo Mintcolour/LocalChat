@@ -25,7 +25,8 @@ Future<void> showNetworkDiagnosticsDialog(
         final failures = discovery.bindFailures
             .map(
               (failure) =>
-                  '${failure.port}: errno=${failure.errorCode ?? '-'} '
+                  '${failure.interfaceName ?? failure.port}: '
+                  '${failure.address ?? ''} errno=${failure.errorCode ?? '-'} '
                   '${failure.message}',
             )
             .join('\n');

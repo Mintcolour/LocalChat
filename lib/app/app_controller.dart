@@ -39,6 +39,8 @@ import '../services/notification_service.dart';
 import '../services/secure_key_store.dart';
 import '../services/security_service.dart';
 import '../services/transport_service.dart';
+import '../services/peer_presence_monitor.dart';
+import '../services/peer_request_failure.dart';
 import '../services/update_check_service.dart';
 import '../services/windows_firewall_service.dart';
 import '../services/window_service.dart';
@@ -92,6 +94,8 @@ class AppController extends ChangeNotifier {
       identityService,
       securityService,
       this.fileStore,
+      logger: _logger,
+      now: _now,
     );
     discoveryService = DiscoveryService(db, identityService, logger: _logger);
     automationService = AutomationService(
@@ -204,7 +208,14 @@ class AppController extends ChangeNotifier {
 
   /// 是否有任何特定操作进行中（不含文件传输，传输已入队异步执行）。
   bool get anyOperationActive => activeOperations.isNotEmpty;
-  String status = '正在启动 LocalChat...';
+  String _status = '正在启动 LocalChat...';
+  String get status => _status;
+  set status(String value) {
+    _status = value;
+    // A new operation/result must not be combined with an unrelated old error.
+    lastError = null;
+  }
+
   String? lastError;
   String? notificationText;
   int notificationSerial = 0;
@@ -227,7 +238,7 @@ class AppController extends ChangeNotifier {
   final Map<String, Timer> _pairRequestTimers = {};
   Timer? _presenceTimer;
   Timer? _refreshTimer;
-  bool _refreshingPresence = false;
+  final _presenceMonitor = PeerPresenceMonitor();
   bool _refreshInFlight = false;
   bool _refreshQueued = false;
   bool _loadingMore = false;
@@ -1335,6 +1346,9 @@ class AppController extends ChangeNotifier {
     final peer = await _currentSelectedPeer();
     if (peer == null || !peer.trusted || text.trim().isEmpty) return;
     _beginOperation('sendText:${peer.id}');
+    status = languageCode == 'en'
+        ? 'Sending to ${titleFor(peer)}...'
+        : '正在发送到 ${titleFor(peer)}…';
     notifyListeners();
     try {
       await transportService.sendText(peer, text.trim());
@@ -1343,12 +1357,12 @@ class AppController extends ChangeNotifier {
           ? 'Sent to ${titleFor(peer)}'
           : '${titleFor(peer)} 已发送';
     } catch (error) {
-      lastError = '$error';
-      status = error is AppFailure
-          ? error.userMessage
-          : (languageCode == 'en'
-                ? '${titleFor(peer)} disconnected, message failed'
-                : '${titleFor(peer)} 连接断开，消息发送失败');
+      status = peerRequestFailure(
+        error,
+        operation: languageCode == 'en' ? 'Send message' : '发送消息',
+        target: titleFor(peer),
+        languageCode: languageCode,
+      ).userMessage;
     } finally {
       _endOperation('sendText:${peer.id}');
       notifyListeners();
@@ -1746,8 +1760,12 @@ class AppController extends ChangeNotifier {
       }
       status = text.retrySucceeded;
     } catch (error) {
-      lastError = '$error';
-      status = error is AppFailure ? error.userMessage : text.retryFailed;
+      status = peerRequestFailure(
+        error,
+        operation: languageCode == 'en' ? 'Retry send' : '重试发送',
+        target: titleFor(peer),
+        languageCode: languageCode,
+      ).userMessage;
     } finally {
       await refresh();
       _endOperation('retry:${message.id}');
@@ -2058,31 +2076,21 @@ class AppController extends ChangeNotifier {
     lastError = null;
     notifyListeners();
     final existing = await db.getDevice(deviceId);
-    // 手动添加的跨网段设备：直接用存储的 host:port 探测，不依赖 UDP 广播。
+    // Probe the stored endpoint first, including manual cross-subnet peers.
     if (existing != null &&
         existing.host != null &&
         existing.port != null &&
-        existing.endpointSource == 'manual') {
+        existing.identityChanged != true) {
       final ok = await transportService.checkPeer(existing);
       if (ok) {
         status = languageCode == 'en'
             ? '$selectedTitle reconnected'
             : '$selectedTitle 已重新连接';
         notifyListeners();
-        return existing;
+        return db.getDevice(deviceId);
       }
     }
     await discoveryService.announce();
-    if (existing != null &&
-        existing.host != null &&
-        existing.port != null &&
-        existing.lastSeen != null) {
-      status = languageCode == 'en'
-          ? '$selectedTitle reconnected'
-          : '$selectedTitle 已重新连接';
-      notifyListeners();
-      return existing;
-    }
     try {
       final peer = await discoveryService.peers
           .where((peer) => peer.deviceId == deviceId)
@@ -2103,21 +2111,16 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _refreshPeerPresence() async {
-    if (_refreshingPresence) return;
-    _refreshingPresence = true;
-    try {
-      final peers = await db.listTrustedDevices();
-      for (final peer in peers) {
-        await transportService.checkPeer(peer);
-      }
-      await refresh();
-    } finally {
-      _refreshingPresence = false;
-    }
+    await _presenceMonitor.refresh(
+      loadPeers: db.listTrustedDevices,
+      checkPeer: transportService.checkPeer,
+      onComplete: refresh,
+    );
   }
 
   @override
   void dispose() {
+    _presenceMonitor.stop();
     unawaited(windowService.setQuickDropFilesHandler(null));
     _transportSub?.cancel();
     _notificationSub?.cancel();

@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
 import '../core/device_profile.dart';
+import '../core/peer_status.dart';
 
 part 'app_database.g.dart';
 
@@ -108,6 +109,15 @@ class Settings extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'localchat'));
+
+  final Map<String, int> _activityRevisions = {};
+  final Map<String, DateTime> _verifiedEndpoints = {};
+
+  int peerActivityRevision(String id) => _activityRevisions[id] ?? 0;
+
+  void _recordActivity(String id) {
+    _activityRevisions[id] = peerActivityRevision(id) + 1;
+  }
 
   @override
   int get schemaVersion => 5;
@@ -253,8 +263,16 @@ class AppDatabase extends _$AppDatabase {
     required String avatarSeed,
     required String avatarColor,
     List<String>? capabilities,
+    bool verifiedEndpoint = false,
+    DateTime? seenAt,
   }) async {
     final existing = await getDevice(id);
+    final now = seenAt ?? DateTime.now();
+    final verifiedAt = _verifiedEndpoints[id];
+    final keepVerifiedEndpoint =
+        !verifiedEndpoint &&
+        verifiedAt != null &&
+        now.difference(verifiedAt) <= peerOnlineWindow;
     // 手动添加的跨网段设备：保留用户填写的 host/port 与 endpointSource，
     // 不被 UDP 广播或入站请求的源 IP 覆盖（仅刷新展示名、公钥、头像、lastSeen）。
     final isManual = existing?.endpointSource == 'manual';
@@ -275,13 +293,15 @@ class AppDatabase extends _$AppDatabase {
           platform: Value(platform),
           avatarSeed: Value(avatarSeed),
           avatarColor: Value(avatarColor),
-          host: Value(isManual ? existing.host! : host),
-          port: Value(isManual ? existing.port! : port),
-          lastSeen: Value(DateTime.now()),
+          host: Value(isManual || keepVerifiedEndpoint ? existing.host! : host),
+          port: Value(isManual || keepVerifiedEndpoint ? existing.port! : port),
+          lastSeen: Value(identityChanged ? null : now),
           capabilities: capsValue,
           identityChanged: Value(identityChanged),
         ),
       );
+      _recordActivity(id);
+      if (verifiedEndpoint && !identityChanged) _verifiedEndpoints[id] = now;
       return;
     }
     await into(devices).insertOnConflictUpdate(
@@ -297,13 +317,15 @@ class AppDatabase extends _$AppDatabase {
         trusted: Value(existing?.trusted ?? false),
         host: Value(isManual ? existing!.host! : host),
         port: Value(isManual ? existing!.port! : port),
-        lastSeen: Value(DateTime.now()),
+        lastSeen: Value(now),
         capabilities: capsValue,
         identityChanged: const Value(false),
         endpointSource: Value(existing?.endpointSource ?? 'auto'),
         createdAt: existing == null ? DateTime.now() : existing.createdAt,
       ),
     );
+    _recordActivity(id);
+    if (verifiedEndpoint) _verifiedEndpoints[id] = now;
   }
 
   Future<void> trustDevice({
@@ -342,6 +364,7 @@ class AppDatabase extends _$AppDatabase {
         createdAt: existing?.createdAt ?? DateTime.now(),
       ),
     );
+    _recordActivity(id);
   }
 
   Future<void> updateDeviceEndpoint({
@@ -349,11 +372,13 @@ class AppDatabase extends _$AppDatabase {
     required String host,
     required int port,
     bool force = false,
+    DateTime? seenAt,
   }) async {
     // 手动添加的跨网段端点不应被 UDP 发现或 TCP 源 IP 自动覆盖。
     if (!force) {
       final existing = await getDevice(id);
       if (existing != null && existing.endpointSource == 'manual') {
+        await markDeviceSeen(id, seenAt: seenAt);
         return;
       }
     }
@@ -361,9 +386,38 @@ class AppDatabase extends _$AppDatabase {
       DevicesCompanion(
         host: Value(host),
         port: Value(port),
-        lastSeen: Value(DateTime.now()),
+        lastSeen: Value(seenAt ?? DateTime.now()),
       ),
     );
+    _recordActivity(id);
+    _verifiedEndpoints[id] = seenAt ?? DateTime.now();
+  }
+
+  Future<void> markDeviceSeen(String id, {DateTime? seenAt}) async {
+    await (update(devices)..where((tbl) => tbl.id.equals(id))).write(
+      DevicesCompanion(lastSeen: Value(seenAt ?? DateTime.now())),
+    );
+    _recordActivity(id);
+  }
+
+  /// Conditional SQL prevents a late probe from erasing more recent activity.
+  Future<bool> markDeviceOfflineIfStale(
+    Device observed, {
+    required DateTime cutoff,
+    required int revision,
+  }) async {
+    if (peerActivityRevision(observed.id) != revision) return false;
+    final count =
+        await (update(devices)..where(
+              (tbl) =>
+                  tbl.id.equals(observed.id) &
+                  (tbl.lastSeen.isNull() |
+                      tbl.lastSeen.isSmallerThanValue(cutoff)) &
+                  tbl.host.equals(observed.host ?? '') &
+                  tbl.port.equals(observed.port ?? 0),
+            ))
+            .write(const DevicesCompanion(lastSeen: Value(null)));
+    return count > 0;
   }
 
   /// 以手动方式落库一个跨网段设备（未信任，等待配对确认）。
@@ -402,6 +456,8 @@ class AppDatabase extends _$AppDatabase {
         createdAt: existing == null ? DateTime.now() : existing.createdAt,
       ),
     );
+    _recordActivity(id);
+    _verifiedEndpoints.remove(id);
   }
 
   /// 把能力列表序列化为可写入 capabilities 列的 [Value]；null 表示不更新该列。
@@ -425,6 +481,19 @@ class AppDatabase extends _$AppDatabase {
     await (update(devices)..where((tbl) => tbl.id.equals(id))).write(
       const DevicesCompanion(lastSeen: Value(null)),
     );
+    _recordActivity(id);
+    _verifiedEndpoints.remove(id);
+  }
+
+  Future<void> markDeviceIdentityChanged(String id) async {
+    await (update(devices)..where((tbl) => tbl.id.equals(id))).write(
+      const DevicesCompanion(
+        identityChanged: Value(true),
+        lastSeen: Value(null),
+      ),
+    );
+    _recordActivity(id);
+    _verifiedEndpoints.remove(id);
   }
 
   Future<Conversation> ensureConversation(Device peer) async {
@@ -510,6 +579,8 @@ class AppDatabase extends _$AppDatabase {
       conversations,
     )..where((tbl) => tbl.peerDeviceId.equals(deviceId))).go();
     await (delete(devices)..where((tbl) => tbl.id.equals(deviceId))).go();
+    _activityRevisions.remove(deviceId);
+    _verifiedEndpoints.remove(deviceId);
   }
 
   Future<void> deleteStaleUntrustedDevices(DateTime cutoff) async {

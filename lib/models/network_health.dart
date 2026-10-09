@@ -5,11 +5,15 @@ class DiscoveryBindFailure {
     required this.port,
     required this.message,
     this.errorCode,
+    this.address,
+    this.interfaceName,
   });
 
   final int port;
   final int? errorCode;
   final String message;
+  final String? address;
+  final String? interfaceName;
 }
 
 class DiscoveryHealth {

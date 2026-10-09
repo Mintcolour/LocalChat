@@ -356,6 +356,12 @@ class _TransferTaskRow extends StatelessWidget {
       if (code == 'interrupted') {
         return text.en ? 'Interrupted' : '已中断';
       }
+      if (code != null && code.startsWith('peer_http_')) {
+        final status = int.tryParse(code.substring('peer_http_'.length));
+        if (status != null) {
+          return text.en ? 'Failed (HTTP $status)' : '失败（HTTP $status）';
+        }
+      }
       return text.en
           ? 'Failed${code != null && code != 'unknown' ? ' ($code)' : ''}'
           : '失败${code != null && code != 'unknown' ? '（$code）' : ''}';

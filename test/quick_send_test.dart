@@ -61,7 +61,7 @@ void main() {
       final offline = _device(
         id: 'offline',
         displayName: 'Offline PC',
-        lastSeen: now.subtract(const Duration(seconds: 30)),
+        lastSeen: now.subtract(const Duration(seconds: 31)),
       );
       final untrusted = _device(
         id: 'untrusted',

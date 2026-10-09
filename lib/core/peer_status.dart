@@ -1,8 +1,9 @@
 import '../data/app_database.dart';
 
-const peerOnlineWindow = Duration(seconds: 12);
+const peerOnlineWindow = Duration(seconds: 30);
 
 bool isPeerOnline(Device device, {DateTime? now}) {
+  if (device.identityChanged == true) return false;
   final lastSeen = device.lastSeen;
   if (lastSeen == null) return false;
   return (now ?? DateTime.now()).difference(lastSeen) <= peerOnlineWindow;

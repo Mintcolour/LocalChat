@@ -16,6 +16,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/app_failure.dart';
 import '../core/formatters.dart';
+import '../core/peer_status.dart';
 import '../data/app_database.dart';
 import '../models/network_diagnostic.dart';
 import '../models/notification_event.dart';
@@ -26,6 +27,8 @@ import 'file_store.dart';
 import 'transport/frame_codec.dart';
 import 'transport/outbound_task.dart';
 import 'identity_service.dart';
+import 'diagnostic_log_service.dart';
+import 'peer_http_client.dart';
 import 'security_service.dart';
 
 const _progressPersistInterval = Duration(milliseconds: 300);
@@ -36,19 +39,23 @@ class TransportService {
     this._db,
     this._identityService,
     this._securityService,
-    this._fileStore,
-  );
+    this._fileStore, {
+    DiagnosticLogger logger = const NoopDiagnosticLogger(),
+    DateTime Function()? now,
+    this._probeTimeout = const Duration(seconds: 3),
+  }) : _logger = logger,
+       _now = now ?? DateTime.now,
+       _dio = createPeerHttpClient(logger);
 
   final AppDatabase _db;
   final IdentityService _identityService;
   final SecurityService _securityService;
   final FileStore _fileStore;
-  final _dio = dio.Dio(
-    dio.BaseOptions(
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 75),
-    ),
-  );
+  final dio.Dio _dio;
+  final DiagnosticLogger _logger;
+  final DateTime Function() _now;
+  final Duration _probeTimeout;
+  final Map<String, ({int revision, int count})> _probeFailures = {};
   final _uuid = const Uuid();
   final _updates = StreamController<void>.broadcast();
   final _notifications = StreamController<String>.broadcast();
@@ -534,16 +541,28 @@ class TransportService {
 
   Future<bool> checkPeer(Device peer) async {
     final current = await _freshPeer(peer);
-    if (!current.trusted || current.host == null || current.port == null) {
+    if (!current.trusted ||
+        current.identityChanged == true ||
+        current.host == null ||
+        current.port == null) {
       return false;
     }
+    final revision = _db.peerActivityRevision(current.id);
     try {
       final response = await _dio.getUri<Map<String, dynamic>>(
         Uri.parse('http://${current.host}:${current.port}/v1/hello'),
+        options: dio.Options(
+          connectTimeout: _probeTimeout,
+          sendTimeout: _probeTimeout,
+          receiveTimeout: _probeTimeout,
+        ),
       );
       final data = response.data;
       if (data == null || data['device_id'] != current.id) {
-        await _db.markDeviceOffline(current.id);
+        if (_db.peerActivityRevision(current.id) == revision) {
+          await _db.markDeviceOffline(current.id);
+        }
+        _logger.warning('presence.identity_mismatch', {'host': current.host});
         _updates.add(null);
         return false;
       }
@@ -573,10 +592,24 @@ class TransportService {
             fingerprint: fingerprint,
           );
         } catch (_) {
-          await _db.markDeviceOffline(current.id);
+          if (_db.peerActivityRevision(current.id) == revision) {
+            await _db.markDeviceIdentityChanged(current.id);
+          }
+          _logger.warning('presence.invalid_identity', {
+            'host': current.host,
+            'port': current.port,
+          });
           _updates.add(null);
           return false;
         }
+      }
+      // A successful message may have refreshed or moved this endpoint while
+      // the hello request was in flight. Do not overwrite that newer state.
+      if (_db.peerActivityRevision(current.id) != revision) {
+        final latest = await _db.getDevice(current.id);
+        return latest != null &&
+            latest.identityChanged != true &&
+            isPeerOnline(latest, now: _now());
       }
       await _db.upsertDiscoveredDevice(
         id: current.id,
@@ -595,11 +628,32 @@ class TransportService {
         avatarSeed: _string(data['avatar_seed'], current.avatarSeed),
         avatarColor: _string(data['avatar_color'], current.avatarColor),
         capabilities: _capabilitiesFrom(data['capabilities']),
+        verifiedEndpoint: true,
+        seenAt: _now(),
       );
+      _probeFailures.remove(current.id);
       _updates.add(null);
-      return true;
-    } catch (_) {
-      await _db.markDeviceOffline(current.id);
+      final updated = await _db.getDevice(current.id);
+      return updated != null && updated.identityChanged != true;
+    } catch (error) {
+      if (_db.peerActivityRevision(current.id) != revision) return false;
+      final previous = _probeFailures[current.id];
+      final count = previous?.revision == revision ? previous!.count + 1 : 1;
+      _probeFailures[current.id] = (revision: revision, count: count);
+      final markedOffline =
+          count >= 3 &&
+          await _db.markDeviceOfflineIfStale(
+            current,
+            cutoff: _now().subtract(peerOnlineWindow),
+            revision: revision,
+          );
+      _logger.warning('presence.probe_failed', {
+        'host': current.host,
+        'port': current.port,
+        'consecutiveFailures': count,
+        'markedOffline': markedOffline,
+        'lastSeen': current.lastSeen?.toIso8601String(),
+      });
       _updates.add(null);
       return false;
     }
@@ -697,7 +751,6 @@ class TransportService {
         });
       } catch (error) {
         if (!_isConnectionError(error)) rethrow;
-        await _db.markDeviceOffline(targetPeer.id);
         _updates.add(null);
         final resolved = await reconnectPeer?.call(targetPeer.id);
         if (resolved == null) rethrow;
@@ -984,6 +1037,8 @@ class TransportService {
     } catch (error) {
       final code = error is AppFailure
           ? error.code
+          : error is dio.DioException && error.response?.statusCode != null
+          ? 'peer_http_${error.response!.statusCode}'
           : (_isConnectionError(error) ? 'connection_lost' : 'unknown');
       await _markTransferFailed(task.transferId, code);
       task.completeError(error);
@@ -1077,7 +1132,6 @@ class TransportService {
       } catch (error) {
         if (task?.canceled == true) throw const OutboundCancelled();
         if (!_isConnectionError(error)) rethrow;
-        await _db.markDeviceOffline(targetPeer.id);
         _updates.add(null);
         final resolved = await reconnectPeer?.call(targetPeer.id);
         if (resolved == null) rethrow;
@@ -1561,6 +1615,8 @@ class TransportService {
     } catch (error) {
       return Response.forbidden('$error');
     }
+    await _db.markDeviceSeen(peer.id);
+    var lastActivityAt = _now();
     final transfer = await (_db.select(
       _db.transfers,
     )..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
@@ -1620,6 +1676,10 @@ class TransportService {
         received += clear.length;
         expectedIndex++;
         await _markTransferProgress(id, received);
+        if (_now().difference(lastActivityAt) >= const Duration(seconds: 5)) {
+          await _db.markDeviceSeen(peer.id);
+          lastActivityAt = _now();
+        }
       }
       await sink.close();
     } on OutboundCancelled {
@@ -1794,7 +1854,6 @@ class TransportService {
       if (!_isConnectionError(error)) {
         rethrow;
       }
-      await _db.markDeviceOffline(current.id);
       _updates.add(null);
       final resolved = await reconnectPeer?.call(current.id);
       if (resolved == null) {
@@ -1818,6 +1877,7 @@ class TransportService {
     String method = 'post',
     OutboundTask? task,
   }) async {
+    _requireIdentityUnchanged(peer);
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
@@ -1852,6 +1912,7 @@ class TransportService {
     Map<String, Object?> payload, {
     OutboundTask? task,
   }) async {
+    _requireIdentityUnchanged(peer);
     if (peer.host == null || peer.port == null) {
       throw StateError('Peer endpoint is not known.');
     }
@@ -1864,6 +1925,11 @@ class TransportService {
       uri,
       data: envelope,
       cancelToken: task?.cancelToken,
+    );
+    await _db.updateDeviceEndpoint(
+      id: peer.id,
+      host: peer.host!,
+      port: peer.port!,
     );
     final data = response.data;
     if (data != null) return Map<String, Object?>.from(data);

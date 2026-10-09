@@ -253,4 +253,76 @@ void main() {
 
     expect(sentPorts.toSet(), {firstPort, secondPort});
   });
+
+  test(
+    'failed interface is isolated and network switches recover including Tailscale',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final identity = IdentityService(db);
+      await identity.load();
+      final ports = await freeUdpPorts(1);
+      var interfaces = [
+        DiscoveryInterfaceAddress(
+          name: 'invalid',
+          address: InternetAddress('10.12.38.78'),
+        ),
+        DiscoveryInterfaceAddress(
+          name: 'Wi-Fi',
+          address: InternetAddress('192.168.31.214'),
+        ),
+        DiscoveryInterfaceAddress(
+          name: 'Tailscale',
+          address: InternetAddress('100.114.54.23'),
+        ),
+      ];
+      final attempts = <String>[];
+      final service = DiscoveryService(
+        db,
+        identity,
+        candidatePorts: ports,
+        interfaceLoader: () async => interfaces,
+        socketBinder: (address, port) {
+          attempts.add(address.address);
+          if (address.address == '10.12.38.78') {
+            throw const SocketException(
+              'Address unavailable',
+              osError: OSError('invalid', 10049),
+            );
+          }
+          return RawDatagramSocket.bind(InternetAddress.loopbackIPv4, port);
+        },
+      );
+      addTearDown(service.stop);
+      final initial = await service.start(listenPort: 40123);
+      expect(initial.availability, DiscoveryAvailability.degraded);
+      expect(initial.bindFailures.single.interfaceName, 'invalid');
+      expect(initial.bindFailures.single.address, '10.12.38.78');
+      expect(initial.bindFailures.single.errorCode, 10049);
+      expect(
+        initial.interfaceAddresses,
+        containsAll(['192.168.31.214', '100.114.54.23']),
+      );
+      interfaces = [
+        DiscoveryInterfaceAddress(
+          name: 'new Wi-Fi',
+          address: InternetAddress('192.168.1.20'),
+        ),
+      ];
+      await service.refreshInterfaces();
+      expect(service.health.interfaceAddresses, ['192.168.1.20']);
+      expect(service.health.bindFailures, isEmpty);
+      expect(service.health.availability, DiscoveryAvailability.active);
+      expect(attempts, contains('192.168.1.20'));
+      interfaces = [
+        DiscoveryInterfaceAddress(
+          name: 'restored Wi-Fi',
+          address: InternetAddress('192.168.31.214'),
+        ),
+      ];
+      await service.refreshInterfaces();
+      expect(service.health.interfaceAddresses, ['192.168.31.214']);
+      expect(attempts.where((ip) => ip == '192.168.31.214'), hasLength(2));
+    },
+  );
 }

@@ -190,6 +190,9 @@ void main() {
         'LOCALAPPDATA': root.path,
         'SystemRoot': Platform.environment['SystemRoot']!,
         'PATH': '',
+        'http_proxy': 'http://127.0.0.1:1',
+        'https_proxy': 'http://127.0.0.1:1',
+        'no_proxy': '',
       };
       final listing = await Process.run(
         executable.path,

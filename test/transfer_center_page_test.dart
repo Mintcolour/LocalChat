@@ -74,6 +74,21 @@ void main() {
         avatarSeed: 'seed',
         avatarColor: '#2563EB',
       );
+      await db
+          .into(db.transfers)
+          .insert(
+            TransfersCompanion.insert(
+              id: 't-http-failed',
+              peerDeviceId: 'peer-1',
+              direction: 'out',
+              fileName: 'failed.bin',
+              fileSize: 1,
+              status: 'failed',
+              errorCode: const Value('peer_http_502'),
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
 
       await tester.pumpWidget(
         MaterialApp(home: TransferCenterPage(controller: controller)),
@@ -85,6 +100,7 @@ void main() {
       expect(find.text('photo.png'), findsWidgets);
       expect(find.text('doc.pdf'), findsWidgets);
       expect(find.text('sent.apk'), findsWidgets);
+      expect(find.text('失败（HTTP 502）'), findsOneWidget);
       // 分组标题出现。
       expect(find.textContaining('进行中'), findsOneWidget);
       expect(find.textContaining('已完成'), findsOneWidget);

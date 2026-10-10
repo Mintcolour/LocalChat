@@ -20,11 +20,13 @@ import 'package:localchat/services/peer_http_client.dart';
 import 'package:localchat/services/peer_presence_monitor.dart';
 import 'package:localchat/services/security_service.dart';
 import 'package:localchat/services/transport_service.dart';
+import 'package:localchat/services/transport/frame_codec.dart';
 import 'package:localchat/ui/banners.dart';
 
 class _Store extends FileStore {
   _Store(this.root);
   final Directory root;
+  Future<void> Function()? beforeSave;
   @override
   Future<Directory> receiveDirectory() async => root;
   @override
@@ -36,7 +38,10 @@ class _Store extends FileStore {
     required DateTime at,
     String? relativePath,
     bool moveSource = false,
-  }) async => SavedFile(path: sourcePath, actualFileName: fileName);
+  }) async {
+    await beforeSave?.call();
+    return SavedFile(path: sourcePath, actualFileName: fileName);
+  }
 }
 
 class _Logger implements DiagnosticLogger {
@@ -69,6 +74,7 @@ void main() {
   late LocalIdentity a, b;
   late Directory root;
   late _Logger logger;
+  late _Store receiveStore;
   late DateTime now;
 
   setUp(() async {
@@ -92,11 +98,12 @@ void main() {
       now: () => now,
       probeTimeout: const Duration(milliseconds: 250),
     );
+    receiveStore = _Store(root);
     receiver = TransportService(
       dbB,
       identityB,
       SecurityService(identityB),
-      _Store(root),
+      receiveStore,
     );
     sender.autoCopyReceivedText = receiver.autoCopyReceivedText = false;
     await sender.start();
@@ -127,6 +134,37 @@ void main() {
     await root.delete(recursive: true);
   });
   Future<Device> target() async => (await dbA.getDevice(b.deviceId))!;
+  Future<Map<String, dynamic>> signedRequestToReceiver(
+    String path,
+    Map<String, Object?> payload, {
+    String method = 'POST',
+  }) async {
+    final identity = IdentityService(dbA);
+    await identity.load();
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    try {
+      final request = await client.openUrl(
+        method,
+        Uri.parse('http://127.0.0.1:${receiver.port}$path'),
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(
+        jsonEncode(
+          await SecurityService(identity).seal(await target(), {
+            ...payload,
+            'sender_listen_port': sender.port,
+          }),
+        ),
+      );
+      final response = await request.close();
+      expect(response.statusCode, 200);
+      return jsonDecode(await utf8.decoder.bind(response).join())
+          as Map<String, dynamic>;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<HttpServer> serverWith(
     Future<void> Function(HttpRequest) handler,
   ) async {
@@ -466,6 +504,218 @@ void main() {
     expect(task?.errorCode, 'peer_http_502');
     expect(isPeerOnline(await target(), now: now), isTrue);
   });
+
+  test(
+    'canceled truncated stream retains cancellation and deletes its partial file',
+    () async {
+      final identity = IdentityService(dbA);
+      await identity.load();
+      final security = SecurityService(identity);
+      final peer = await target();
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      addTearDown(() => client.close(force: true));
+      const id = 'cancel-truncated-stream';
+      await signedRequestToReceiver('/v1/transfers', {
+        'id': id,
+        'file_name': 'partial.bin',
+        'file_size': 10,
+      });
+      final stream = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${receiver.port}/v1/transfers/$id/stream'),
+      );
+      stream.bufferOutput = false;
+      (await security.streamAuthHeaders(peer, id)).forEach(stream.headers.set);
+      stream.headers.contentType = ContentType.binary;
+      stream.add(
+        encodeFrame(await security.encryptFileChunk(peer, 0, [1, 2, 3])),
+      );
+      // Start another frame but close it after cancellation, forcing a read error.
+      stream.add([0x4c, 0x43]);
+      await stream.flush();
+      final timer = Stopwatch()..start();
+      Transfer incoming = (await dbB.listTransfersByIds([id])).single;
+      while (incoming.receivedBytes != 3 &&
+          timer.elapsed < const Duration(seconds: 5)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        incoming = (await dbB.listTransfersByIds([id])).single;
+      }
+      expect(incoming.receivedBytes, 3);
+      final cancel = await signedRequestToReceiver('/v1/transfers/$id/cancel', {
+        'transfer_id': id,
+      });
+      expect(cancel['canceled'], isTrue);
+      expect((await dbB.listTransfersByIds([id])).single.status, 'canceled');
+      final response = await stream.close();
+      await response.drain<void>();
+      expect(response.statusCode, 200);
+      final finished = (await dbB.listTransfersByIds([id])).single;
+      expect(finished.status, 'canceled');
+      expect(await File(incoming.filePath!).exists(), isFalse);
+      final messages = await dbB.select(dbB.chatMessages).get();
+      expect(messages.single.status, 'canceled');
+    },
+  );
+
+  test(
+    'late stream, chunk and complete cannot revive a canceled transfer',
+    () async {
+      const id = 'cancel-before-stream';
+      await signedRequestToReceiver('/v1/transfers', {
+        'id': id,
+        'file_name': 'canceled.bin',
+        'file_size': 3,
+      });
+      final transfer = (await dbB.listTransfersByIds([id])).single;
+      expect(
+        (await signedRequestToReceiver('/v1/transfers/$id/cancel', {
+          'transfer_id': id,
+        }))['canceled'],
+        isTrue,
+      );
+      expect(await File(transfer.filePath!).exists(), isFalse);
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      addTearDown(() => client.close(force: true));
+      final identity = IdentityService(dbA);
+      await identity.load();
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${receiver.port}/v1/transfers/$id/stream'),
+      );
+      (await SecurityService(
+        identity,
+      ).streamAuthHeaders(await target(), id)).forEach(request.headers.set);
+      request.add([0x4c, 0x43]);
+      final response = await request.close();
+      expect(response.statusCode, 200);
+      expect(
+        (jsonDecode(await utf8.decoder.bind(response).join())
+            as Map)['canceled'],
+        isTrue,
+      );
+      for (final operation in ['chunks/0', 'complete']) {
+        expect(
+          (await signedRequestToReceiver(
+            '/v1/transfers/$id/$operation',
+            {
+              'bytes': base64Encode([1, 2, 3]),
+            },
+            method: operation.startsWith('chunks/') ? 'PUT' : 'POST',
+          ))['canceled'],
+          isTrue,
+        );
+      }
+      expect((await dbB.listTransfersByIds([id])).single.status, 'canceled');
+      expect(
+        (await dbB.select(dbB.chatMessages).get()).single.status,
+        'canceled',
+      );
+      expect(await File(transfer.filePath!).exists(), isFalse);
+
+      // An explicit new start still permits the user to retry with the same id.
+      await signedRequestToReceiver('/v1/transfers', {
+        'id': id,
+        'file_name': 'retry.bin',
+        'file_size': 3,
+      });
+      final retry = (await dbB.listTransfersByIds([id])).single;
+      expect(retry.status, 'receiving');
+      await signedRequestToReceiver('/v1/transfers/$id/chunks/0', {
+        'bytes': base64Encode([1, 2, 3]),
+      }, method: 'PUT');
+      await signedRequestToReceiver('/v1/transfers/$id/complete', {
+        'sha256': crypto.sha256.convert([1, 2, 3]).toString(),
+      });
+      expect((await dbB.listTransfersByIds([id])).single.status, 'received');
+      expect(await File(retry.filePath!).readAsBytes(), [1, 2, 3]);
+    },
+  );
+
+  test(
+    'uncanceled truncated stream retains a failure and its partial file',
+    () async {
+      const id = 'uncanceled-truncated-stream';
+      await signedRequestToReceiver('/v1/transfers', {
+        'id': id,
+        'file_name': 'truncated.bin',
+        'file_size': 3,
+      });
+      final identity = IdentityService(dbA);
+      await identity.load();
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      addTearDown(() => client.close(force: true));
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${receiver.port}/v1/transfers/$id/stream'),
+      );
+      (await SecurityService(
+        identity,
+      ).streamAuthHeaders(await target(), id)).forEach(request.headers.set);
+      request.add([0x4c, 0x43]);
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 400);
+      final transfer = (await dbB.listTransfersByIds([id])).single;
+      expect(transfer.status, 'failed');
+      expect(
+        (await dbB.select(dbB.chatMessages).get()).single.status,
+        'failed',
+      );
+      expect(await File(transfer.filePath!).exists(), isTrue);
+    },
+  );
+
+  test(
+    'completion and cancellation serialize while the verified file is saved',
+    () async {
+      const id = 'cancel-during-save';
+      await signedRequestToReceiver('/v1/transfers', {
+        'id': id,
+        'file_name': 'saved.bin',
+        'file_size': 3,
+      });
+      await signedRequestToReceiver('/v1/transfers/$id/chunks/0', {
+        'bytes': base64Encode([1, 2, 3]),
+      }, method: 'PUT');
+      final saving = Completer<void>();
+      final release = Completer<void>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
+      receiveStore.beforeSave = () async {
+        saving.complete();
+        await release.future;
+      };
+      final completion = signedRequestToReceiver('/v1/transfers/$id/complete', {
+        'sha256': crypto.sha256.convert([1, 2, 3]).toString(),
+      });
+      await saving.future.timeout(const Duration(seconds: 5));
+      final revision = dbB.peerActivityRevision(a.deviceId);
+      var cancelResolved = false;
+      final cancellation =
+          signedRequestToReceiver('/v1/transfers/$id/cancel', {
+            'transfer_id': id,
+          }).then((result) {
+            cancelResolved = true;
+            return result;
+          });
+      final timer = Stopwatch()..start();
+      while (dbB.peerActivityRevision(a.deviceId) == revision &&
+          timer.elapsed < const Duration(seconds: 5)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      // The cancel envelope reached the receiver while completion holds the file.
+      expect(dbB.peerActivityRevision(a.deviceId), greaterThan(revision));
+      expect(cancelResolved, isFalse);
+      release.complete();
+      expect((await completion)['ok'], isTrue);
+      expect((await cancellation)['reason'], 'already_done');
+      final transfer = (await dbB.listTransfersByIds([id])).single;
+      expect(transfer.status, 'received');
+      expect(
+        (await dbB.select(dbB.chatMessages).get()).single.status,
+        'received',
+      );
+      expect(await File(transfer.filePath!).readAsBytes(), [1, 2, 3]);
+    },
+  );
 
   test(
     'bounded presence workers reach healthy peers while others are pending and never overlap',

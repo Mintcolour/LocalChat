@@ -224,7 +224,9 @@ void main() {
 
     for (var i = 0; i < 100; i++) {
       incoming = (await dbB.listTransfersByIds([outgoing.id])).single;
-      if (incoming.status == 'canceled') break;
+      // Cancellation is persisted immediately; cleanup follows stream closure.
+      final cleaned = incomingPath == null || !File(incomingPath).existsSync();
+      if (incoming.status == 'canceled' && cleaned) break;
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     expect(incoming!.status, 'canceled');
